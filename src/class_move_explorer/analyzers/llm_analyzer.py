@@ -75,6 +75,9 @@ class LLMAnalyzer:
         """Identify potentially misplaced classes using a weighted multi-factor scoring system"""
         misplaced = []
         
+        # Pre-calculate class to package mapping for structural analysis
+        class_to_pkg = {c['class_name']: c['package'] for c in classes_data}
+
         for class_info in classes_data:
             class_name = class_info['class_name']
             current_pkg = class_info['package'].lower()
@@ -82,7 +85,7 @@ class LLMAnalyzer:
             # 1. Calculate scores for all possible package types
             scores = {}
             for pkg_type in self.package_rules.keys():
-                score = self._calculate_class_score(class_info, pkg_type, dependency_graph, embeddings)
+                score = self._calculate_class_score(class_info, pkg_type, dependency_graph, embeddings, class_to_pkg)
                 scores[pkg_type] = score
             
             # 2. Find the best fitting package type
@@ -92,7 +95,8 @@ class LLMAnalyzer:
             current_type = self._detect_pkg_type(current_pkg)
             
             # If current type is 'unknown' or doesn't match best type, and best score is high
-            if best_score > 0.65:
+            # Lowered threshold to 0.60
+            if best_score > 0.60:
                 if current_type != best_pkg_type:
                     misplaced.append(class_name)
                     
@@ -105,12 +109,13 @@ class LLMAnalyzer:
         """Generate detailed suggestions with reasoning"""
         suggestions = {}
         class_map = {c['class_name']: c for c in classes_data}
+        class_to_pkg = {c['class_name']: c['package'] for c in classes_data}
         
         for name in misplaced_classes:
             class_info = class_map[name]
             
             # Re-calculate scores to find target
-            scores = {pt: self._calculate_class_score(class_info, pt, dependency_graph, embeddings) 
+            scores = {pt: self._calculate_class_score(class_info, pt, dependency_graph, embeddings, class_to_pkg)
                      for pt in self.package_rules.keys()}
             target_type, confidence = max(scores.items(), key=lambda x: x[1])
             
@@ -128,7 +133,8 @@ class LLMAnalyzer:
         return suggestions
 
     def _calculate_class_score(self, class_info: Dict, target_type: str, 
-                             dependency_graph: Dict, embeddings: Dict) -> float:
+                             dependency_graph: Dict, embeddings: Dict,
+                             class_to_pkg: Dict = None) -> float:
         """Weighted score for a class fitting into a package type"""
         rules = self.package_rules[target_type]
         name_lower = class_info['class_name'].lower()
@@ -156,7 +162,19 @@ class LLMAnalyzer:
         
         # 3. Structural Score (Dependencies) - Weight: 0.2
         structural_score = 0.5 # Neutral baseline
-        # In a real impl, we'd check if most dependencies are from classes of 'target_type'
+        if class_to_pkg and dependency_graph:
+            deps = dependency_graph.get('class_dependencies', {}).get(class_info['class_name'], [])
+            rev_deps = dependency_graph.get('reverse_dependencies', {}).get(class_info['class_name'], [])
+            all_related = set(deps) | set(rev_deps)
+
+            if all_related:
+                matching_related = 0
+                for related_class in all_related:
+                    related_pkg = class_to_pkg.get(related_class, '').lower()
+                    if target_type in related_pkg:
+                        matching_related += 1
+
+                structural_score = matching_related / len(all_related)
         
         total_score = (rule_score * 0.4) + (semantic_score * 0.4) + (structural_score * 0.2)
         return total_score
