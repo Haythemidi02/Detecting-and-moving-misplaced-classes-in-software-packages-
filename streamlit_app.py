@@ -1,0 +1,409 @@
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+import tempfile
+import zipfile
+
+import pandas as pd
+import streamlit as st
+
+# Ensure local package is importable when running from repo root
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "src")))
+
+from class_move_explorer.core.assistant import MoveClassAssistant
+from class_move_explorer.evaluation.evaluator import Evaluator
+
+
+APP_TITLE = "ClassMoveExplorer"
+APP_SUBTITLE = "Detect misplaced Java classes and recommend better package locations."
+
+
+def _set_page_config() -> None:
+    st.set_page_config(
+        page_title=APP_TITLE,
+        page_icon="🧭",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+
+
+def _inject_css() -> None:
+    st.markdown(
+        """
+<style>
+  /* Hide Streamlit default menu/footer for a cleaner “app” feel */
+  #MainMenu { visibility: hidden; }
+  footer { visibility: hidden; }
+  header { visibility: hidden; }
+
+  /* Layout polish */
+  .block-container { padding-top: 1.25rem; padding-bottom: 2.0rem; }
+  [data-testid="stHorizontalBlock"] { gap: 1.1rem; }
+
+  /* Card */
+  .cme-card {
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.03);
+    border-radius: 16px;
+    padding: 18px 18px 10px 18px;
+    backdrop-filter: blur(10px);
+  }
+  .cme-title {
+    font-size: 2.05rem;
+    line-height: 1.15;
+    font-weight: 750;
+    margin: 0;
+    letter-spacing: -0.02em;
+  }
+  .cme-subtitle {
+    margin-top: 0.35rem;
+    color: rgba(255,255,255,0.72);
+    font-size: 1.0rem;
+  }
+  .cme-badge {
+    display: inline-block;
+    font-size: 0.8rem;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(99,102,241,0.20);
+    border: 1px solid rgba(99,102,241,0.35);
+    color: rgba(255,255,255,0.92);
+    margin-bottom: 10px;
+  }
+
+  /* KPI “pill” */
+  .cme-kpi {
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.02);
+    border-radius: 14px;
+    padding: 12px 14px;
+  }
+  .cme-kpi-label { font-size: 0.85rem; color: rgba(255,255,255,0.70); margin: 0; }
+  .cme-kpi-value { font-size: 1.55rem; font-weight: 750; margin: 2px 0 0 0; }
+  .cme-kpi-hint  { font-size: 0.80rem; color: rgba(255,255,255,0.55); margin: 2px 0 0 0; }
+
+  /* Make buttons a bit more “app-like” */
+  .stButton>button {
+    border-radius: 12px;
+    padding: 0.65rem 0.9rem;
+  }
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+@st.cache_resource
+def _get_assistant() -> MoveClassAssistant:
+    return MoveClassAssistant()
+
+
+def _configure_assistant(assistant: MoveClassAssistant, enable_dependencies: bool, enable_embeddings: bool) -> MoveClassAssistant:
+    # Mutates assistant for this run (intentional: avoids re-loading heavy models repeatedly).
+    assistant.dependency_analyzer = assistant.dependency_analyzer if enable_dependencies else None
+    assistant.embedding_analyzer = assistant.embedding_analyzer if enable_embeddings else None
+    return assistant
+
+
+def _pick_local_directory() -> Optional[str]:
+    """
+    Best-effort local folder picker.
+    Works when Streamlit is running locally with GUI access.
+    """
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        path = filedialog.askdirectory(title="Select Java project folder")
+        root.destroy()
+        return path or None
+    except Exception:
+        return None
+
+
+def _extract_zip_to_temp(uploaded_zip: st.runtime.uploaded_file_manager.UploadedFile) -> Path:
+    base_dir = Path(tempfile.mkdtemp(prefix="classmoveexplorer_"))
+    zip_path = base_dir / "project.zip"
+    zip_path.write_bytes(uploaded_zip.getbuffer())
+
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        zf.extractall(base_dir / "unzipped")
+
+    unzipped = base_dir / "unzipped"
+    # If the zip contains a single top-level folder, use it as project root
+    top_level = [p for p in unzipped.iterdir()]
+    if len(top_level) == 1 and top_level[0].is_dir():
+        return top_level[0]
+    return unzipped
+
+
+def _count_java_files(project_root: Path) -> int:
+    try:
+        return sum(1 for _ in project_root.rglob("*.java"))
+    except Exception:
+        return 0
+
+
+def _kpi(label: str, value: str, hint: str = "") -> None:
+    st.markdown(
+        f"""
+<div class="cme-kpi">
+  <p class="cme-kpi-label">{label}</p>
+  <p class="cme-kpi-value">{value}</p>
+  <p class="cme-kpi-hint">{hint}</p>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_metrics_cards(metrics: dict) -> None:
+    if not metrics:
+        st.info("No metrics available yet.")
+        return
+
+    total = int(metrics.get("total_classes", 0))
+    misplaced = int(metrics.get("misplaced_count", 0))
+    misplacement_rate = metrics.get("misplacement_rate", None)
+    avg_conf = metrics.get("average_confidence", None)
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        _kpi("Total classes", f"{total}", "Parsed from your project")
+    with c2:
+        _kpi("Misplaced found", f"{misplaced}", "Potential relocation candidates")
+    with c3:
+        _kpi(
+            "Misplacement rate",
+            f"{misplacement_rate:.1%}" if isinstance(misplacement_rate, (int, float)) else "—",
+            "Misplaced / total",
+        )
+    with c4:
+        _kpi(
+            "Avg confidence",
+            f"{avg_conf:.2f}" if isinstance(avg_conf, (int, float)) else "—",
+            "Across misplaced classes",
+        )
+
+
+def _render_analysis_dashboard(df: pd.DataFrame, metrics: dict) -> None:
+    _render_metrics_cards(metrics)
+
+    st.divider()
+    misplaced_df = df[df["is_misplaced"] == True].sort_values("confidence", ascending=False)  # noqa: E712
+
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        st.subheader("Confidence distribution")
+        # Histogram-like binning without extra deps
+        series = df["confidence"].fillna(0.0).clip(0.0, 1.0)
+        bins = pd.cut(series, bins=[0, 0.2, 0.4, 0.6, 0.8, 1.0], include_lowest=True)
+        hist = bins.value_counts().sort_index()
+        # Altair/Streamlit can choke on IntervalIndex; convert buckets to plain strings.
+        hist_df = hist.reset_index()
+        hist_df.columns = ["bucket", "count"]
+        hist_df["bucket"] = hist_df["bucket"].astype(str)
+        st.bar_chart(hist_df.set_index("bucket")["count"], height=220)
+    with c2:
+        st.subheader("Top misplaced recommendations")
+        if misplaced_df.empty:
+            st.info("No misplaced classes detected.")
+        else:
+            st.dataframe(
+                misplaced_df[["class_name", "current_package", "suggested_package", "confidence", "method_used"]],
+                use_container_width=True,
+                hide_index=True,
+                height=260,
+            )
+
+
+def page_dashboard() -> None:
+    repo_root = Path(__file__).resolve().parent
+
+    # Top “hero” header
+    st.markdown(
+        f"""
+<div class="cme-card">
+  <div class="cme-badge">Java package placement • structural + semantic + LLM reasoning</div>
+  <h1 class="cme-title">{APP_TITLE}</h1>
+  <div class="cme-subtitle">{APP_SUBTITLE}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    st.write("")
+
+    # Central “control panel” (no sidebar-centric UX)
+    left, center, right = st.columns([1, 2.2, 1])
+    with center:
+        st.markdown('<div class="cme-card">', unsafe_allow_html=True)
+        st.subheader("Run analysis")
+
+        if "selected_project_path" not in st.session_state:
+            st.session_state.selected_project_path = None
+
+        project_root: Optional[Path] = None
+
+        with st.form("run_form", border=False):
+            source = st.radio("Input type", ["Local folder", "Upload ZIP"], horizontal=True)
+
+            if source == "Local folder":
+                pick = st.form_submit_button("Pick folder…")
+                if pick:
+                    picked = _pick_local_directory()
+                    if picked:
+                        st.session_state.selected_project_path = picked
+                    else:
+                        st.error("Folder picker is unavailable here. Please switch to **Upload ZIP**.")
+
+                if st.session_state.selected_project_path:
+                    st.caption("Selected folder")
+                    st.code(st.session_state.selected_project_path)
+                    project_root = Path(st.session_state.selected_project_path)
+                else:
+                    st.info("Click **Pick folder…** to select your Java project directory.")
+            else:
+                uploaded = st.file_uploader("Upload a zipped Java project", type=["zip"])
+                if uploaded is not None:
+                    project_root = _extract_zip_to_temp(uploaded)
+                    st.session_state.selected_project_path = str(project_root)
+                    st.success("ZIP extracted. Ready to run.")
+
+            st.divider()
+            opt1, opt2, opt3 = st.columns([1, 1, 1])
+            with opt1:
+                enable_dependencies = st.toggle("Dependencies", value=True)
+            with opt2:
+                enable_embeddings = st.toggle("Embeddings", value=True)
+            with opt3:
+                run_evaluation = st.toggle("Evaluation", value=False)
+
+            confidence_threshold = st.slider(
+                "Confidence threshold",
+                min_value=0.0,
+                max_value=1.0,
+                value=0.6,
+                step=0.01,
+                help="Recommendations below this threshold will be treated as not-misplaced (matches CLI behavior).",
+            )
+            misplace_ratio = st.slider(
+                "Evaluation misplace ratio",
+                0.01,
+                0.80,
+                0.25,
+                0.01,
+                help="Only used when Evaluation is enabled.",
+            )
+
+            run_btn = st.form_submit_button("Run", type="primary", use_container_width=True)
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    if not run_btn:
+        # If we already have results in session, show them immediately (keeps the app feeling “stateful”)
+        existing_df = st.session_state.get("last_analysis_df", None)
+        existing_metrics = st.session_state.get("last_analysis_metrics", None)
+        if existing_df is None or existing_metrics is None:
+            st.write("")
+            st.info("Select an input above and click **Run** to generate your dashboard.")
+            return
+
+    if project_root is None:
+        st.error("Please select a folder or upload a ZIP first.")
+        return
+
+    if not project_root.exists() or not project_root.is_dir():
+        st.error("Selected project root is not a directory.")
+        return
+
+    java_count = _count_java_files(project_root)
+    if java_count == 0:
+        st.warning("No `.java` files found in the selected folder. Make sure you uploaded/selected a Java project root.")
+    elif run_evaluation and java_count < 5:
+        st.warning(
+            "Evaluation needs a reasonably-sized project. "
+            f"Only **{java_count}** Java file(s) were found, so Precision/Recall may be meaningless. "
+            "If you uploaded a ZIP, ensure it contains the full project root (not just a single file/folder)."
+        )
+
+    assistant = _configure_assistant(_get_assistant(), enable_dependencies=enable_dependencies, enable_embeddings=enable_embeddings)
+
+    with st.spinner("Running analysis… (first run may download/load models)"):
+        df = assistant.analyze_and_recommend(project_path=str(project_root), output_csv=None)
+
+    if df is None or df.empty:
+        st.warning("No results produced (no Java classes found or analysis returned empty results).")
+        return
+
+    # Apply confidence threshold by flipping low-confidence ones to not-misplaced (matches CLI behavior)
+    if confidence_threshold > 0.6:
+        df = df.copy()
+        df.loc[df["confidence"] < confidence_threshold, "is_misplaced"] = False
+
+    metrics = assistant.metrics.metrics_calculated
+    st.session_state.last_analysis_df = df
+    st.session_state.last_analysis_metrics = metrics
+
+    eval_results = None
+    if run_evaluation:
+        evaluator = Evaluator(assistant)
+        with st.spinner("Running evaluation…"):
+            eval_results = evaluator.run_evaluation(str(project_root), misplace_ratio=float(misplace_ratio))
+        st.session_state.last_eval_results = eval_results
+
+    st.success("Done.")
+
+    tab_overview, tab_table, tab_eval = st.tabs(["Overview", "Results table", "Evaluation"])
+
+    with tab_overview:
+        st.subheader("Analysis overview")
+        _render_analysis_dashboard(df, metrics)
+
+        st.divider()
+        st.subheader("Export")
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "Download analysis CSV",
+            data=csv_bytes,
+            file_name="class_placement_analysis.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+    with tab_table:
+        st.subheader("All results")
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+    with tab_eval:
+        st.subheader("Evaluation")
+        stored = eval_results if eval_results is not None else st.session_state.get("last_eval_results", None)
+        if not stored:
+            st.info("Enable **Run evaluation after analysis** in the sidebar to compute Precision / Recall / F1.")
+        elif "error" in stored:
+            st.error(stored.get("error", "Evaluation failed."))
+        else:
+            cols = st.columns(4)
+            cols[0].metric("Precision", f"{stored.get('precision', 0.0):.2%}")
+            cols[1].metric("Recall", f"{stored.get('recall', 0.0):.2%}")
+            cols[2].metric("F1 score", f"{stored.get('f1_score', 0.0):.2%}")
+            cols[3].metric("Suggestion accuracy", f"{stored.get('suggestion_accuracy', 0.0):.2%}")
+            st.divider()
+            st.json(stored)
+
+
+def main() -> None:
+    _set_page_config()
+    _inject_css()
+
+    page_dashboard()
+
+
+if __name__ == "__main__":
+    main()
+

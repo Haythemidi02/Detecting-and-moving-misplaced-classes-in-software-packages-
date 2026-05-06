@@ -33,10 +33,18 @@ class MoveClassAssistant:
             return pd.DataFrame()
             
         # 2. Structural Analysis
-        dependency_graph = self.dependency_analyzer.analyze_dependencies(classes_data)
+        dependency_graph = (
+            self.dependency_analyzer.analyze_dependencies(classes_data)
+            if self.dependency_analyzer is not None
+            else {}
+        )
         
         # 3. Semantic Analysis
-        embeddings = self.embedding_analyzer.compute_embeddings(classes_data)
+        embeddings = (
+            self.embedding_analyzer.compute_embeddings(classes_data)
+            if self.embedding_analyzer is not None
+            else {}
+        )
         
         # 4. Identification
         misplaced_classes = self.llm_analyzer.identify_misplaced_classes(

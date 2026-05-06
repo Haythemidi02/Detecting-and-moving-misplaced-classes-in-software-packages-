@@ -48,6 +48,13 @@ The fastest way to analyze a project is using the provided CLI script:
 python scripts/run_cli.py /path/to/your/java/project --output results.csv --verbose
 ```
 
+### 1b. Run the Streamlit UI
+To use a simple web UI that lets you run analyses, view metrics, and browse output files:
+
+```bash
+python -m streamlit run streamlit_app.py
+```
+
 ### 2. Run Formal Evaluation
 To evaluate the tool's accuracy against a test project:
 

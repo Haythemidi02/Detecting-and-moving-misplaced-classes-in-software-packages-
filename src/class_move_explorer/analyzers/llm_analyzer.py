@@ -136,6 +136,7 @@ class LLMAnalyzer:
                              dependency_graph: Dict, embeddings: Dict,
                              class_to_pkg: Dict = None) -> float:
         """Weighted score for a class fitting into a package type"""
+        embeddings = embeddings or {}
         rules = self.package_rules[target_type]
         name_lower = class_info['class_name'].lower()
         

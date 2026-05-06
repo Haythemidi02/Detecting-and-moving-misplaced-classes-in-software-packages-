@@ -17,6 +17,8 @@ class Evaluator:
         Run evaluation by intentionally misplacing classes and measuring recovery performance
         """
         print(f"Starting evaluation on: {project_path}")
+        # Reset per-run ground truth (avoid leakage across repeated evaluations)
+        self.ground_truth = {}
         
         # 1. Analyze project to get current (correct) state
         classes_data = self.assistant.project_analyzer.analyze_project(project_path)
@@ -48,8 +50,16 @@ class Evaluator:
         # We need to bypass the file reading step and use our corrupted data directly
         # So we'll manually run the pipeline steps
         print("Running analysis on corrupted state...")
-        dep_graph = self.assistant.dependency_analyzer.analyze_dependencies(corrupted_data)
-        embeddings = self.assistant.embedding_analyzer.compute_embeddings(corrupted_data)
+        dep_graph = (
+            self.assistant.dependency_analyzer.analyze_dependencies(corrupted_data)
+            if self.assistant.dependency_analyzer is not None
+            else {}
+        )
+        embeddings = (
+            self.assistant.embedding_analyzer.compute_embeddings(corrupted_data)
+            if self.assistant.embedding_analyzer is not None
+            else {}
+        )
         
         misplaced_detected = self.assistant.llm_analyzer.identify_misplaced_classes(
             corrupted_data, dep_graph, embeddings
@@ -81,7 +91,7 @@ class Evaluator:
         for name in ground_truth_names:
             if name in suggestions:
                 original_pkg = self.ground_truth[name]
-                suggested_type = suggestions[name]['suggested_type']
+                suggested_type = suggestions[name].get('suggested_type', '')
                 if suggested_type in original_pkg.lower():
                     correct_suggestions += 1
                     
@@ -90,6 +100,7 @@ class Evaluator:
         return {
             "total_classes": total_count,
             "misplaced_count": len(detected),
+            "misplaced_ground_truth": len(ground_truth_names),
             "precision": precision,
             "recall": recall,
             "f1_score": f1,
