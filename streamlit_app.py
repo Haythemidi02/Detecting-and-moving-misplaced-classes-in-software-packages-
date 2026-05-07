@@ -1,5 +1,6 @@
 import os
 import sys
+import io
 from pathlib import Path
 from dotenv import load_dotenv
 from datetime import datetime
@@ -7,9 +8,15 @@ from pathlib import Path
 from typing import Optional
 import tempfile
 import zipfile
+import logging
+import warnings
 
 import pandas as pd
 import streamlit as st
+
+# Suppress logging and warnings during analysis
+logging.getLogger().setLevel(logging.ERROR)
+warnings.filterwarnings("ignore")
 
 # Ensure local package is importable when running from repo root
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "src")))
@@ -222,8 +229,12 @@ def _render_analysis_dashboard(df: pd.DataFrame, metrics: dict) -> None:
         if misplaced_df.empty:
             st.info("No misplaced classes detected.")
         else:
+            # Convert all values to strings to avoid function/object references appearing
+            display_df = misplaced_df[["class_name", "current_package", "suggested_package", "confidence", "method_used"]].copy()
+            for col in display_df.columns:
+                display_df[col] = display_df[col].apply(lambda x: str(x) if pd.notna(x) else "")
             st.dataframe(
-                misplaced_df[["class_name", "current_package", "suggested_package", "confidence", "method_used"]],
+                display_df,
                 use_container_width=True,
                 hide_index=True,
                 height=260,
@@ -366,8 +377,14 @@ def page_dashboard() -> None:
         hf_api_token=hf_api_token if use_huggingface else None
     )
 
+    # Suppress any stdout output during analysis
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+
     with st.spinner("Running analysis… (first run may download/load models)"):
         df = assistant.analyze_and_recommend(project_path=str(project_root), output_csv=None)
+
+    sys.stdout = old_stdout
 
     if df is None or df.empty:
         st.warning("No results produced (no Java classes found or analysis returned empty results).")
@@ -385,8 +402,11 @@ def page_dashboard() -> None:
     eval_results = None
     if run_evaluation:
         evaluator = Evaluator(assistant)
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
         with st.spinner("Running evaluation…"):
             eval_results = evaluator.run_evaluation(str(project_root), misplace_ratio=float(misplace_ratio))
+        sys.stdout = old_stdout
         st.session_state.last_eval_results = eval_results
 
     st.success("Done.")
@@ -410,7 +430,11 @@ def page_dashboard() -> None:
 
     with tab_table:
         st.subheader("All results")
-        st.dataframe(df_display, use_container_width=True, hide_index=True)
+        # Convert all values to strings to avoid function/object references appearing
+        clean_df = df_display.copy()
+        for col in clean_df.columns:
+            clean_df[col] = clean_df[col].apply(lambda x: str(x) if pd.notna(x) else "")
+        st.dataframe(clean_df, use_container_width=True, hide_index=True)
         with st.expander("Explain a class (debug why it was/wasn't flagged)"):
             try:
                 class_options = df["class_name"].tolist()
@@ -462,6 +486,8 @@ def page_dashboard() -> None:
                 assistant = _get_assistant(use_huggingface=use_huggingface, hf_model=hf_model,
                                             hf_api_token=hf_api_token if use_huggingface else None)
                 evaluator = Evaluator(assistant)
+                old_stdout = sys.stdout
+                sys.stdout = io.StringIO()
                 with st.spinner("Running synthetic benchmark…"):
                     bench = evaluator.run_synthetic_benchmark(
                         num_projects=int(bench_projects),
@@ -469,6 +495,7 @@ def page_dashboard() -> None:
                         misplace_ratio=float(bench_ratio),
                         seed=int(bench_seed),
                     )
+                sys.stdout = old_stdout
                 st.session_state.last_benchmark_results = bench
 
             bench = st.session_state.get("last_benchmark_results", None)
