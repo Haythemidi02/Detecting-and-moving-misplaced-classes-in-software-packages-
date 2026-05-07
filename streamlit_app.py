@@ -12,6 +12,9 @@ import streamlit as st
 # Ensure local package is importable when running from repo root
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "src")))
 
+# HuggingFace API token (from environment variable - for backend use only)
+HF_API_TOKEN = os.environ.get("HF_API_TOKEN", "")
+
 from class_move_explorer.core.assistant import MoveClassAssistant
 from class_move_explorer.evaluation.evaluator import Evaluator
 
@@ -103,14 +106,22 @@ def _inject_css() -> None:
 
 
 @st.cache_resource
-def _get_assistant() -> MoveClassAssistant:
-    return MoveClassAssistant()
+def _get_assistant(use_huggingface: bool = True, hf_model: str = "microsoft/phi-2",
+                   hf_api_token: str = None) -> MoveClassAssistant:
+    return MoveClassAssistant(use_huggingface=use_huggingface, hf_model=hf_model,
+                               hf_api_token=hf_api_token)
 
 
-def _configure_assistant(assistant: MoveClassAssistant, enable_dependencies: bool, enable_embeddings: bool) -> MoveClassAssistant:
+def _configure_assistant(assistant: MoveClassAssistant, enable_dependencies: bool, enable_embeddings: bool,
+                        use_huggingface: bool = True, hf_model: str = "microsoft/phi-2",
+                        hf_api_token: str = None) -> MoveClassAssistant:
     # Mutates assistant for this run (intentional: avoids re-loading heavy models repeatedly).
     assistant.dependency_analyzer = assistant.dependency_analyzer if enable_dependencies else None
     assistant.embedding_analyzer = assistant.embedding_analyzer if enable_embeddings else None
+    # Reinitialize LLM analyzer with HuggingFace settings
+    from class_move_explorer.analyzers.llm_analyzer import LLMAnalyzer
+    assistant.llm_analyzer = LLMAnalyzer(use_huggingface=use_huggingface, hf_model=hf_model,
+                                          hf_api_token=hf_api_token)
     return assistant
 
 
@@ -272,6 +283,22 @@ def page_dashboard() -> None:
         with opt3:
             run_evaluation = st.toggle("Evaluation", value=False)
 
+        st.subheader("HuggingFace Settings")
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            hf_api_token = st.text_input("HuggingFace API Token", type="password",
+                                          help="Get your free token at https://huggingface.co/settings/tokens",
+                                          value=HF_API_TOKEN, label_visibility="collapsed")
+        with col2:
+            hf_model = st.selectbox(
+                "LLM Model",
+                ["microsoft/phi-2", "Qwen/Qwen2-0.5B-Instruct", "TinyLlama/TinyLlama-1.1B-Chat-v1.0"],
+                index=0,
+                help="Code-specialized models available via HuggingFace Inference API"
+            )
+
+        use_huggingface = bool(hf_api_token)
+
         apply_threshold = st.toggle("Apply confidence filter (display only)", value=True)
         confidence_threshold = st.slider(
             "Confidence threshold",
@@ -329,7 +356,15 @@ def page_dashboard() -> None:
             "If you uploaded a ZIP, ensure it contains the full project root (not just a single file/folder)."
         )
 
-    assistant = _configure_assistant(_get_assistant(), enable_dependencies=enable_dependencies, enable_embeddings=enable_embeddings)
+    assistant = _configure_assistant(
+        _get_assistant(use_huggingface=use_huggingface, hf_model=hf_model,
+                       hf_api_token=hf_api_token if use_huggingface else None),
+        enable_dependencies=enable_dependencies,
+        enable_embeddings=enable_embeddings,
+        use_huggingface=use_huggingface,
+        hf_model=hf_model,
+        hf_api_token=hf_api_token if use_huggingface else None
+    )
 
     with st.spinner("Running analysis… (first run may download/load models)"):
         df = assistant.analyze_and_recommend(project_path=str(project_root), output_csv=None)
@@ -376,6 +411,28 @@ def page_dashboard() -> None:
     with tab_table:
         st.subheader("All results")
         st.dataframe(df_display, use_container_width=True, hide_index=True)
+        with st.expander("Explain a class (debug why it was/wasn't flagged)"):
+            try:
+                class_options = df["class_name"].tolist()
+                selected = st.selectbox("Class", class_options)
+                if selected:
+                    # Rebuild the same intermediate artifacts used for the run
+                    classes_data = assistant.project_analyzer.analyze_project(str(project_root))
+                    dep_graph = (
+                        assistant.dependency_analyzer.analyze_dependencies(classes_data)
+                        if assistant.dependency_analyzer is not None
+                        else {}
+                    )
+                    embeddings = (
+                        assistant.embedding_analyzer.compute_embeddings(classes_data)
+                        if assistant.embedding_analyzer is not None
+                        else {}
+                    )
+                    class_map = {c["class_name"]: c for c in classes_data}
+                    info = assistant.llm_analyzer.explain_class(class_map[selected], dep_graph, embeddings, classes_data)
+                    st.json(info)
+            except Exception as e:
+                st.error(f"Explain failed: {e}")
 
     with tab_eval:
         st.subheader("Evaluation")
@@ -402,7 +459,8 @@ def page_dashboard() -> None:
             st.markdown("</div>", unsafe_allow_html=True)
 
             if run_bench:
-                assistant = _get_assistant()
+                assistant = _get_assistant(use_huggingface=use_huggingface, hf_model=hf_model,
+                                            hf_api_token=hf_api_token if use_huggingface else None)
                 evaluator = Evaluator(assistant)
                 with st.spinner("Running synthetic benchmark…"):
                     bench = evaluator.run_synthetic_benchmark(

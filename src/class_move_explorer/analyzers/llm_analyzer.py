@@ -3,85 +3,149 @@ LLMAnalyzer - Combines structural, semantic, and rule-based analysis to identify
 """
 import json
 import re
+import os
 from typing import Dict, List, Set, Tuple
-from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM
-import torch
 import numpy as np
 
 
 class LLMAnalyzer:
-    def __init__(self, model_name: str = "distilgpt2"):
-        """Initialize with a lightweight LLM for reasoning text generation"""
-        print(f"Initializing LLM reasoning engine ({model_name})...")
-        
-        try:
-            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-            self.model = AutoModelForCausalLM.from_pretrained(model_name)
-            self.generator = pipeline("text-generation", 
-                                    model=self.model, 
-                                    tokenizer=self.tokenizer,
-                                    max_new_tokens=50,
-                                    temperature=0.3,
-                                    pad_token_id=self.tokenizer.eos_token_id)
-        except Exception as e:
-            print(f"Warning: Could not load LLM model. Falling back to template reasoning. Error: {e}")
-            self.generator = None
-        
+    def __init__(self, use_huggingface: bool = True, hf_model: str = "microsoft/phi-2",
+                 hf_api_token: str = None):
+        """Initialize analyzer with HuggingFace API support"""
+        self.hf_model = hf_model
+        self.hf_api_token = hf_api_token
+        self.hf_available = False
+
+        if use_huggingface:
+            try:
+                from huggingface_hub import InferenceClient
+                # Test if we can authenticate
+                if hf_api_token:
+                    client = InferenceClient(model=self.hf_model, token=hf_api_token)
+                    self.hf_available = True
+                    print(f"Initializing reasoning engine with HuggingFace API ({hf_model})...")
+                else:
+                    print("HuggingFace API token not provided. Using heuristic-based reasoning...")
+            except ImportError:
+                print("HuggingFace not available. Using heuristic-based reasoning...")
+            except Exception as e:
+                print(f"HuggingFace API error: {e}. Using heuristic-based reasoning...")
+                self.hf_available = False
+
+        self.generator = None
         self.package_rules = self._get_package_rules()
+
+    def _call_huggingface(self, prompt: str, max_tokens: int = 150) -> str:
+        """Call HuggingFace Inference API (free tier - no API key needed)"""
+        try:
+            from huggingface_hub import InferenceClient
+            client = InferenceClient(model=self.hf_model)
+            response = client.text_generation(prompt, max_new_tokens=max_tokens)
+            return response if response else ""
+        except Exception as e:
+            print(f"HuggingFace API error: {e}")
+            return ""
+
+    def _generate_llm_reasoning(self, class_info: Dict, target_type: str, class_context: str = "") -> str:
+        """Generate reasoning using HuggingFace LLM"""
+        if not self.hf_available:
+            return ""
+
+        class_name = class_info['class_name']
+        annotations = class_info.get('annotations', []) or []
+        methods = class_info.get('methods', []) or []
+        fields = class_info.get('fields', []) or []
+        extends = class_info.get('extends', '') or ''
+
+        prompt = f"""You are a Java architecture expert. Analyze this class and explain why it belongs in a {target_type} package.
+
+Class: {class_name}
+Annotations: {', '.join(annotations) if annotations else 'none'}
+Methods: {', '.join(methods[:10]) if methods else 'none'}
+Fields: {', '.join(fields[:5]) if fields else 'none'}
+Extends: {extends if extends else 'none'}
+{class_context}
+
+Provide a brief explanation (1-2 sentences) of why this class belongs in the {target_type} layer. Focus on architectural patterns, naming conventions, and annotations."""
+
+        try:
+            from huggingface_hub import InferenceClient
+            client = InferenceClient(model=self.hf_model, token=self.hf_api_token)
+            response = client.text_generation(prompt, max_new_tokens=150)
+            if response:
+                lines = response.split('\n')
+                return ' '.join(lines[:3])
+        except Exception as e:
+            print(f"HuggingFace API error: {e}")
+        return ""
         
     def _get_package_rules(self) -> Dict:
-        """Rules for various architectural layers"""
+        """Rules for various architectural layers - more comprehensive patterns"""
         return {
             'model': {
-                'keywords': ['entity', 'model', 'dto', 'pojo', 'bean', 'data', 'domain', 'request', 'response'],
-                'annotations': ['Entity', 'Table', 'Data', 'NoArgsConstructor', 'AllArgsConstructor', 'Getter', 'Setter', 'Embeddable'],
-                'patterns': [r'.*DTO$', r'.*Entity$', r'.*Model$', r'.*Request$', r'.*Response$']
+                'keywords': ['entity', 'model', 'dto', 'pojo', 'bean', 'data', 'domain', 'request', 'response', 'VO', 'BO'],
+                'annotations': ['Entity', 'Table', 'Data', 'NoArgsConstructor', 'AllArgsConstructor', 'Getter', 'Setter', 'Embeddable', 'Column', 'Id'],
+                'patterns': [r'.*DTO$', r'.*Entity$', r'.*Model$', r'.*Request$', r'.*Response$', r'.*VO$', r'.*BO$', r'.*POJO$'],
+                'method_patterns': ['get', 'set', 'is', 'validate', 'toString', 'equals', 'hashCode'],
+                'extends_patterns': []
             },
             'service': {
-                'keywords': ['service', 'logic', 'manager', 'handler', 'processor', 'provider', 'impl'],
-                'annotations': ['Service', 'Component', 'Transactional', 'Bean'],
-                'patterns': [r'.*Service$', r'.*Manager$', r'.*Processor$', r'.*Handler$', r'.*Impl$']
+                'keywords': ['service', 'logic', 'manager', 'handler', 'processor', 'provider', 'impl', 'business', 'facade'],
+                'annotations': ['Service', 'Component', 'Transactional', 'Bean', 'Required'],
+                'patterns': [r'.*Service$', r'.*Manager$', r'.*Processor$', r'.*Handler$', r'.*Impl$', r'.*Facade$'],
+                'method_patterns': ['create', 'update', 'delete', 'find', 'get', 'process', 'execute', 'validate', 'calculate'],
+                'extends_patterns': []
             },
             'controller': {
-                'keywords': ['controller', 'rest', 'api', 'resource', 'endpoint', 'web'],
-                'annotations': ['RestController', 'Controller', 'RequestMapping', 'GetMapping', 'PostMapping'],
-                'patterns': [r'.*Controller$', r'.*Resource$', r'.*Endpoint$']
+                'keywords': ['controller', 'rest', 'api', 'resource', 'endpoint', 'web', 'http', 'gateway'],
+                'annotations': ['RestController', 'Controller', 'RequestMapping', 'GetMapping', 'PostMapping', 'PutMapping', 'DeleteMapping', 'PatchMapping', 'RequestBody', 'ResponseBody'],
+                'patterns': [r'.*Controller$', r'.*Resource$', r'.*Endpoint$', r'.*API$', r'.*Handler$'],
+                'method_patterns': ['get', 'post', 'put', 'delete', 'patch', 'request', 'handle'],
+                'extends_patterns': []
             },
             'repository': {
-                'keywords': ['repository', 'dao', 'persistence', 'mapper', 'crud'],
-                'annotations': ['Repository', 'Mapper'],
-                'patterns': [r'.*Repository$', r'.*DAO$', r'.*Mapper$']
+                'keywords': ['repository', 'dao', 'persistence', 'mapper', 'crud', 'store', 'data'],
+                'annotations': ['Repository', 'Mapper', 'EntityManager', 'Transactional'],
+                'patterns': [r'.*Repository$', r'.*DAO$', r'.*Mapper$', r'.*Store$', r'.*Data$'],
+                'method_patterns': ['find', 'save', 'delete', 'remove', 'update', 'insert', 'query', 'select', 'flush'],
+                'extends_patterns': ['JpaRepository', 'CrudRepository', 'Repository']
             },
             'util': {
-                'keywords': ['util', 'helper', 'utility', 'common', 'tools', 'formatter', 'parser'],
-                'annotations': ['Component'],
-                'patterns': [r'.*Util$', r'.*Helper$', r'.*Utils$', r'.*Formatter$', r'.*Parser$']
+                'keywords': ['util', 'helper', 'utility', 'common', 'tools', 'formatter', 'parser', 'converter', 'validator'],
+                'annotations': ['Component', 'Utility'],
+                'patterns': [r'.*Util$', r'.*Helper$', r'.*Utils$', r'.*Formatter$', r'.*Parser$', r'.*Converter$', r'.*Validator$'],
+                'method_patterns': ['convert', 'format', 'parse', 'validate', 'transform', 'encode', 'decode', 'encrypt', 'decrypt'],
+                'extends_patterns': []
             },
             'config': {
-                'keywords': ['config', 'configuration', 'settings', 'properties', 'setup'],
-                'annotations': ['Configuration', 'ConfigurationProperties', 'Bean'],
-                'patterns': [r'.*Config$', r'.*Configuration$', r'.*Settings$']
+                'keywords': ['config', 'configuration', 'settings', 'properties', 'setup', 'properties'],
+                'annotations': ['Configuration', 'ConfigurationProperties', 'Bean', 'ConditionalOnProperty', 'PropertySource'],
+                'patterns': [r'.*Config$', r'.*Configuration$', r'.*Settings$', r'.*Properties$'],
+                'method_patterns': ['configure', 'initialize', 'load', 'setup', 'createBean'],
+                'extends_patterns': []
             },
             'exception': {
-                'keywords': ['exception', 'error', 'fault', 'failure', 'handler'],
-                'annotations': ['ResponseStatus', 'ControllerAdvice', 'ExceptionHandler'],
-                'patterns': [r'.*Exception$', r'.*Error$', r'.*Fault$']
+                'keywords': ['exception', 'error', 'fault', 'failure', 'handler', 'throwable'],
+                'annotations': ['ResponseStatus', 'ControllerAdvice', 'ExceptionHandler', 'Status'],
+                'patterns': [r'.*Exception$', r'.*Error$', r'.*Fault$', r'.*RuntimeException$', r'.*Throwable$'],
+                'method_patterns': [],
+                'extends_patterns': ['Exception', 'RuntimeException', 'Throwable', 'Error']
             }
         }
 
-    def identify_misplaced_classes(self, classes_data: List[Dict], 
-                                 dependency_graph: Dict, 
+    def identify_misplaced_classes(self, classes_data: List[Dict],
+                                 dependency_graph: Dict,
                                  embeddings: Dict) -> List[str]:
         """Identify potentially misplaced classes using a weighted multi-factor scoring system"""
         misplaced = []
-        
+
         # Pre-calculate class to package mapping for structural analysis
         class_to_pkg = {c['class_name']: c['package'] for c in classes_data}
 
         for class_info in classes_data:
             class_name = class_info['class_name']
             current_pkg = class_info['package'].lower()
-            
+
             # 1. Calculate scores for all possible package types
             scores = {}
             components = {}
@@ -91,70 +155,89 @@ class LLMAnalyzer:
                 )
                 scores[pkg_type] = total
                 components[pkg_type] = (rule_s, sem_s, struct_s, total)
-            
-            # 2. Find the best fitting package type
+
+            # 2. Find the best fitting package type (by total score)
             best_pkg_type, best_score = max(scores.items(), key=lambda x: x[1])
 
-            # If rule signals are extremely strong, don't let embeddings override them.
+            # Check for strong rule signals - if any type has very strong rule match, use that
             best_rule_type, (best_rule, _, _, _) = max(components.items(), key=lambda kv: kv[1][0])
-            if best_rule >= 0.75:
+            if best_rule >= 0.5:  # Lowered threshold from 0.75 to catch more cases
                 best_pkg_type = best_rule_type
                 best_score = scores[best_pkg_type]
-            
+
             # 3. Determine if current package matches best type
             current_type = self._detect_pkg_type(current_pkg)
             current_score = scores.get(current_type, 0.0) if current_type != "unknown" else 0.0
-            
-            # Decision logic
-            # - Strong rule signals (e.g., "*Controller" or annotations) should flag misplacement even if semantic score is low.
-            # - Otherwise require a minimum confidence and a margin over the current package-type score to reduce false positives.
-            if current_type != best_pkg_type:
-                strong_rule_signal = best_rule >= 0.75
-                confident_enough = best_score >= 0.50
-                margin_ok = (best_score - current_score) >= 0.10 if current_type != "unknown" else best_score >= 0.45
 
-                if strong_rule_signal or (confident_enough and margin_ok):
+            # 4. Decision logic - improved thresholds and logic
+            if current_type != best_pkg_type:
+                # Strong indicators that should always flag misplacement
+                strong_rule_signal = best_rule >= 0.6
+                # Annotation match is a very strong signal
+                has_strong_annotation = self._has_strong_annotation_match(class_info, best_pkg_type)
+
+                # Relaxed confidence requirements
+                confident_enough = best_score >= 0.35  # Lowered from 0.50
+                # Allow detection if the score difference is meaningful or current type is unknown
+                margin_ok = (best_score - current_score) >= 0.05 if current_type != "unknown" else best_score >= 0.30
+
+                if strong_rule_signal or has_strong_annotation or (confident_enough and margin_ok):
                     misplaced.append(class_name)
-                    
+
         return misplaced
 
-    def suggest_target_packages(self, misplaced_classes: List[str], 
-                              classes_data: List[Dict], 
+    def _has_strong_annotation_match(self, class_info: Dict, target_type: str) -> bool:
+        """Check if class has strong annotation matching target type"""
+        annotations = class_info.get('annotations', []) or []
+        target_annotations = self.package_rules[target_type]['annotations']
+
+        # Count how many target-specific annotations are present
+        matching = sum(1 for ann in annotations if ann in target_annotations)
+        return matching >= 1  # At least one strong annotation match
+
+    def suggest_target_packages(self, misplaced_classes: List[str],
+                              classes_data: List[Dict],
                               dependency_graph: Dict,
                               embeddings: Dict) -> Dict[str, Dict]:
         """Generate detailed suggestions with reasoning"""
         suggestions = {}
         class_map = {c['class_name']: c for c in classes_data}
         class_to_pkg = {c['class_name']: c['package'] for c in classes_data}
-        
+
         for name in misplaced_classes:
             class_info = class_map[name]
-            
+
             # Re-calculate scores to find target
             comp = {
                 pt: self._calculate_component_scores(class_info, pt, dependency_graph, embeddings, class_to_pkg)
                 for pt in self.package_rules.keys()
             }
-            # Select by total score by default
+
+            # First try by total score
             target_type, (rule_s, _, _, confidence) = max(comp.items(), key=lambda kv: kv[1][3])
-            # But if any rule score is very strong, prefer that type (more deterministic)
+
+            # But if any rule score is strong, prefer that type (more deterministic)
             best_rule_type, (best_rule, _, _, best_total) = max(comp.items(), key=lambda kv: kv[1][0])
-            if best_rule >= 0.75:
+            if best_rule >= 0.5:  # Lowered from 0.75
                 target_type = best_rule_type
-                # Make confidence reflect strong rule matches (so UI thresholds don't hide obvious cases)
                 confidence = max(best_total, best_rule)
-            
-            # Generate reasoning text
+
+            # Generate reasoning text using template (LLM disabled due to hallucinations)
             reasoning = self._generate_reasoning(class_info, target_type, confidence, dependency_graph)
-            
+
+            # Keep original package base if available
+            original_pkg = class_info.get('package', 'com.example')
+            pkg_parts = original_pkg.rsplit('.', 1)
+            base_pkg = pkg_parts[0] if len(pkg_parts) > 1 else 'com.example'
+
             suggestions[name] = {
-                'suggested_package': f"com.example.{target_type}", # Simplified template
+                'suggested_package': f"{base_pkg}.{target_type}",
                 'suggested_type': target_type,
                 'confidence': confidence,
                 'reasoning': reasoning,
                 'method_used': 'Hybrid Structural-Semantic Reasoning'
             }
-            
+
         return suggestions
 
     def _calculate_class_score(self, class_info: Dict, target_type: str, 
@@ -176,27 +259,55 @@ class LLMAnalyzer:
         rules = self.package_rules[target_type]
         name_lower = class_info['class_name'].lower()
         annotations = class_info.get("annotations", []) or []
+        methods = class_info.get('methods', []) or []
+        extends = class_info.get('extends', '') or ''
+        implements = class_info.get('implements', []) or []
 
-        # 1. Rule-based Score (Name & Annotations) - Weight: 0.4
+        # 1. Rule-based Score (Name, Annotations, Methods, Inheritance) - Weight: 0.5
+        # Increased weight for rules as they are most reliable
         rule_score = 0.0
+
+        # Pattern match on class name (strongest signal)
         if any(re.match(p.lower(), name_lower) for p in rules['patterns']):
-            rule_score += 0.5
+            rule_score += 0.4
+
+        # Keyword match (moderate signal)
         if any(k in name_lower for k in rules['keywords']):
-            rule_score += 0.3
+            rule_score += 0.2
+
+        # Annotation match (strong signal)
         matching_anns = [a for a in annotations if a in rules['annotations']]
-        rule_score += min(len(matching_anns) * 0.2, 0.4)
+        rule_score += min(len(matching_anns) * 0.25, 0.5)
+
+        # Method pattern match
+        method_patterns = rules.get('method_patterns', [])
+        if method_patterns:
+            method_matches = sum(1 for m in methods for mp in method_patterns if mp.lower() in m.lower())
+            rule_score += min(method_matches * 0.05, 0.2)
+
+        # Inheritance match (for repository, exception, etc.)
+        extends_patterns = rules.get('extends_patterns', [])
+        if extends_patterns and extends:
+            if any(ext in extends for ext in extends_patterns):
+                rule_score += 0.3
+        if implements:
+            for impl in implements:
+                if any(ext in impl for ext in extends_patterns):
+                    rule_score += 0.2
+
         rule_score = min(rule_score, 1.0)
 
-        # 2. Semantic Score (Embeddings) - Weight: 0.4
-        semantic_score = 0.0
+        # 2. Semantic Score (Embeddings) - Weight: 0.25
+        semantic_score = 0.5  # Default to neutral
         if 'class_embeddings' in embeddings and 'package_type_embeddings' in embeddings:
             class_vec = embeddings['class_embeddings'].get(class_info['class_name'])
             pkg_vec = embeddings['package_type_embeddings'].get(target_type)
             if class_vec is not None and pkg_vec is not None:
                 semantic_score = self._cosine_similarity(class_vec, pkg_vec)
 
-        # 3. Structural Score (Dependencies) - Weight: 0.2
-        structural_score = 0.5  # Neutral baseline
+        # 3. Structural Score (Dependencies) - Weight: 0.25
+        # Improved structural scoring - consider dependencies more carefully
+        structural_score = 0.3  # Default to slightly below neutral
         if class_to_pkg and dependency_graph:
             deps = dependency_graph.get('class_dependencies', {}).get(class_info['class_name'], [])
             rev_deps = dependency_graph.get('reverse_dependencies', {}).get(class_info['class_name'], [])
@@ -211,37 +322,85 @@ class LLMAnalyzer:
 
                 structural_score = matching_related / len(all_related)
 
-        total_score = (rule_score * 0.4) + (semantic_score * 0.4) + (structural_score * 0.2)
+        total_score = (rule_score * 0.5) + (semantic_score * 0.25) + (structural_score * 0.25)
         return rule_score, semantic_score, structural_score, total_score
 
-    def _generate_reasoning(self, class_info: Dict, target_type: str, 
+    def explain_class(self, class_info: Dict, dependency_graph: Dict, embeddings: Dict, classes_data: List[Dict]) -> Dict:
+        """
+        Debug helper: returns per-type component scores and the final decision context
+        for a single class within a project.
+        """
+        class_to_pkg = {c["class_name"]: c["package"] for c in classes_data}
+        scores = {}
+        components = {}
+        for pkg_type in self.package_rules.keys():
+            rule_s, sem_s, struct_s, total = self._calculate_component_scores(
+                class_info, pkg_type, dependency_graph, embeddings, class_to_pkg
+            )
+            scores[pkg_type] = total
+            components[pkg_type] = {"rule": rule_s, "semantic": sem_s, "structural": struct_s, "total": total}
+
+        best_total_type = max(scores.items(), key=lambda kv: kv[1])[0]
+        best_rule_type = max(components.items(), key=lambda kv: kv[1]["rule"])[0]
+        current_type = self._detect_pkg_type((class_info.get("package") or "").lower())
+
+        return {
+            "class_name": class_info.get("class_name"),
+            "current_package": class_info.get("package"),
+            "current_type": current_type,
+            "best_by_total": best_total_type,
+            "best_by_rule": best_rule_type,
+            "scores": components,
+        }
+
+    def _generate_reasoning(self, class_info: Dict, target_type: str,
                           confidence: float, dependency_graph: Dict) -> str:
-        """Generate reasoning using LLM or templates"""
-        prompt = f"Explain why the Java class '{class_info['class_name']}' with annotations {class_info['annotations']} belongs in a '{target_type}' package."
-        
-        if self.generator:
-            try:
-                # Use LLM for creative reasoning
-                output = self.generator(prompt, max_new_tokens=40, do_sample=True, top_k=50)[0]['generated_text']
-                # Clean up output
-                reasoning = output.replace(prompt, "").strip().split('.')[0] + "."
-                if len(reasoning) > 10:
-                    return reasoning
-            except:
-                pass
-                
-        # Template fallback
+        """Generate reasoning using HuggingFace LLM or templates"""
+        # Try HuggingFace first if available
+        if self.hf_available:
+            llm_reasoning = self._generate_llm_reasoning(class_info, target_type)
+            if llm_reasoning and len(llm_reasoning) > 10:
+                return llm_reasoning
+
+        # Fall back to template-based reasoning
         reasons = []
-        if any(re.match(p.lower(), class_info['class_name'].lower()) for p in self.package_rules[target_type]['patterns']):
-            reasons.append(f"its name matches standard {target_type} patterns")
-        
-        matching_anns = [a for a in class_info['annotations'] if a in self.package_rules[target_type]['annotations']]
+
+        # Check name pattern match
+        class_name = class_info['class_name'].lower()
+        patterns = self.package_rules[target_type]['patterns']
+        if any(re.match(p.lower(), class_name) for p in patterns):
+            reasons.append(f"its name follows the standard {target_type} naming convention")
+
+        # Check annotation match
+        annotations = class_info.get('annotations', []) or []
+        matching_anns = [a for a in annotations if a in self.package_rules[target_type]['annotations']]
         if matching_anns:
-            reasons.append(f"it uses {target_type}-specific annotations like {', '.join(matching_anns[:2])}")
-            
+            reasons.append(f"it uses {target_type}-specific annotations ({', '.join(matching_anns[:2])})")
+
+        # Check keyword match
+        keywords = self.package_rules[target_type]['keywords']
+        matching_kw = [k for k in keywords if k in class_name]
+        if matching_kw:
+            reasons.append(f"the class name contains '{matching_kw[0]}' which is typical for {target_type} components")
+
+        # Check method patterns
+        methods = class_info.get('methods', []) or []
+        method_patterns = self.package_rules[target_type].get('method_patterns', [])
+        if method_patterns:
+            method_matches = [m for m in methods for mp in method_patterns if mp.lower() in m.lower()]
+            if method_matches:
+                reasons.append(f"its methods ({method_matches[0]}...) follow {target_type} patterns")
+
+        # Check inheritance
+        extends = class_info.get('extends', '') or ''
+        if extends:
+            extends_patterns = self.package_rules[target_type].get('extends_patterns', [])
+            if any(ext in extends for ext in extends_patterns):
+                reasons.append(f"it extends {target_type}-related class ({extends})")
+
         if not reasons:
-            reasons.append("semantic analysis shows high similarity to other classes in this layer")
-            
+            reasons.append("analysis of class structure and semantics indicates this layer is the best fit")
+
         return f"Based on architectural analysis, this class belongs in the {target_type} layer because " + ", and ".join(reasons) + "."
 
     def _detect_pkg_type(self, package_name: str) -> str:

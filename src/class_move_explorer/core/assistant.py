@@ -14,11 +14,13 @@ from class_move_explorer.utils.metrics import PerformanceMetrics
 
 
 class MoveClassAssistant:
-    def __init__(self):
+    def __init__(self, use_huggingface: bool = True, hf_model: str = "microsoft/phi-2",
+                 hf_api_token: str = None):
         self.project_analyzer = JavaProjectAnalyzer()
         self.dependency_analyzer = DependencyAnalyzer()
         self.embedding_analyzer = EmbeddingAnalyzer()
-        self.llm_analyzer = LLMAnalyzer()
+        self.llm_analyzer = LLMAnalyzer(use_huggingface=use_huggingface, hf_model=hf_model,
+                                         hf_api_token=hf_api_token)
         self.metrics = PerformanceMetrics()
         
     def analyze_and_recommend(self, project_path: str, output_csv: str = "class_placement_analysis.csv") -> pd.DataFrame:
