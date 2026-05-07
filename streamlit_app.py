@@ -1,5 +1,7 @@
 import os
 import sys
+from pathlib import Path
+from dotenv import load_dotenv
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -12,7 +14,8 @@ import streamlit as st
 # Ensure local package is importable when running from repo root
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "src")))
 
-# HuggingFace API token (from environment variable - for backend use only)
+# Load HuggingFace API token from .env file
+load_dotenv()
 HF_API_TOKEN = os.environ.get("HF_API_TOKEN", "")
 
 from class_move_explorer.core.assistant import MoveClassAssistant
