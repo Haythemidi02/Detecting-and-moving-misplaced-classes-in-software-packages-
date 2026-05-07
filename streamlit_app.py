@@ -43,10 +43,10 @@ def _set_page_config() -> None:
 
 
 def _inject_css() -> None:
-    st.markdown(
-        """
+    # Use CSS that inherits from Streamlit's theme - works in both modes
+    css = """
 <style>
-  /* Hide Streamlit default menu/footer for a cleaner “app” feel */
+  /* Hide Streamlit default menu/footer for a cleaner app feel */
   #MainMenu { visibility: hidden; }
   footer { visibility: hidden; }
   header { visibility: hidden; }
@@ -55,13 +55,12 @@ def _inject_css() -> None:
   .block-container { padding-top: 1.25rem; padding-bottom: 2.0rem; }
   [data-testid="stHorizontalBlock"] { gap: 1.1rem; }
 
-  /* Card */
+  /* Card - use Streamlit's native background with subtle border */
   .cme-card {
-    border: 1px solid rgba(255,255,255,0.08);
-    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(128,128,128,0.3);
+    background: rgba(128,128,128,0.08);
     border-radius: 16px;
     padding: 18px 18px 10px 18px;
-    backdrop-filter: blur(10px);
   }
   .cme-title {
     font-size: 2.05rem;
@@ -69,43 +68,45 @@ def _inject_css() -> None:
     font-weight: 750;
     margin: 0;
     letter-spacing: -0.02em;
+    color: inherit;
   }
   .cme-subtitle {
     margin-top: 0.35rem;
-    color: rgba(255,255,255,0.72);
+    color: rgba(128,128,128,1);
     font-size: 1.0rem;
+    color: inherit;
+    opacity: 0.8;
   }
   .cme-badge {
     display: inline-block;
     font-size: 0.8rem;
     padding: 4px 10px;
     border-radius: 999px;
-    background: rgba(99,102,241,0.20);
-    border: 1px solid rgba(99,102,241,0.35);
-    color: rgba(255,255,255,0.92);
+    background: rgba(99,102,241,0.2);
+    border: 1px solid rgba(99,102,241,0.4);
+    color: inherit;
     margin-bottom: 10px;
   }
 
-  /* KPI “pill” */
+  /* KPI pill - semi-transparent that works on any background */
   .cme-kpi {
-    border: 1px solid rgba(255,255,255,0.08);
-    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(128,128,128,0.25);
+    background: rgba(128,128,128,0.06);
     border-radius: 14px;
     padding: 12px 14px;
   }
-  .cme-kpi-label { font-size: 0.85rem; color: rgba(255,255,255,0.70); margin: 0; }
-  .cme-kpi-value { font-size: 1.55rem; font-weight: 750; margin: 2px 0 0 0; }
-  .cme-kpi-hint  { font-size: 0.80rem; color: rgba(255,255,255,0.55); margin: 2px 0 0 0; }
+  .cme-kpi-label { font-size: 0.85rem; color: inherit; margin: 0; opacity: 0.75; }
+  .cme-kpi-value { font-size: 1.55rem; font-weight: 750; margin: 2px 0 0 0; color: inherit; }
+  .cme-kpi-hint  { font-size: 0.80rem; color: inherit; margin: 2px 0 0 0; opacity: 0.6; }
 
-  /* Make buttons a bit more “app-like” */
+  /* Make buttons a bit more app-like */
   .stButton>button {
     border-radius: 12px;
     padding: 0.65rem 0.9rem;
   }
 </style>
-""",
-        unsafe_allow_html=True,
-    )
+"""
+    st.markdown(css, unsafe_allow_html=True)
 
 
 @st.cache_resource
@@ -128,7 +129,7 @@ def _configure_assistant(assistant: MoveClassAssistant, enable_dependencies: boo
     return assistant
 
 
-def _extract_zip_to_temp(uploaded_zip: st.runtime.uploaded_file_manager.UploadedFile) -> Path:
+def _extract_zip_to_temp(uploaded_zip) -> Path:
     base_dir = Path(tempfile.mkdtemp(prefix="classmoveexplorer_"))
     zip_path = base_dir / "project.zip"
     zip_path.write_bytes(uploaded_zip.getbuffer())
@@ -232,7 +233,91 @@ def _render_analysis_dashboard(df: pd.DataFrame, metrics: dict) -> None:
 def page_dashboard() -> None:
     repo_root = Path(__file__).resolve().parent
 
-    # Top “hero” header
+    # ============================================================
+    # SIDEBAR - All settings and parameters (isolated on the left)
+    # ============================================================
+    st.sidebar.markdown(f"### {APP_TITLE}")
+    st.sidebar.caption("Detect misplaced Java classes")
+    st.sidebar.divider()
+
+    # Project Input
+    st.sidebar.subheader("Project Input")
+    project_root: Optional[Path] = None
+    uploaded = st.sidebar.file_uploader("Upload zipped Java project", type=["zip"], key="project_zip")
+    zip_fingerprint = (uploaded.name, uploaded.size) if uploaded is not None else None
+
+    if "zip_fingerprint" not in st.session_state:
+        st.session_state.zip_fingerprint = None
+    if "project_root_path" not in st.session_state:
+        st.session_state.project_root_path = None
+
+    if uploaded is not None and zip_fingerprint != st.session_state.zip_fingerprint:
+        _clear_results()
+        project_root = _extract_zip_to_temp(uploaded)
+        st.session_state.project_root_path = str(project_root)
+        st.session_state.zip_fingerprint = zip_fingerprint
+        st.sidebar.success("Project extracted!")
+    elif st.session_state.project_root_path:
+        project_root = Path(st.session_state.project_root_path)
+        st.sidebar.caption(f"📁 {project_root.name}")
+
+    st.sidebar.divider()
+
+    # Analysis Options
+    st.sidebar.subheader("⚙️ Analysis Options")
+    enable_dependencies = st.sidebar.toggle("Enable Dependencies", value=True)
+    enable_embeddings = st.sidebar.toggle("Enable Embeddings", value=True)
+    run_evaluation = st.sidebar.toggle("Run Evaluation", value=False)
+
+    st.sidebar.divider()
+
+    # HuggingFace Settings
+    st.sidebar.subheader("🤖 HuggingFace Settings")
+    hf_model = st.sidebar.selectbox(
+        "Model",
+        ["microsoft/phi-2", "Qwen/Qwen2-0.5B-Instruct", "TinyLlama/TinyLlama-1.1B-Chat-v1.0"],
+        index=0,
+    )
+    hf_api_token = HF_API_TOKEN
+    use_huggingface = bool(hf_api_token)
+
+    st.sidebar.divider()
+
+    # Display Options
+    st.sidebar.subheader("🎛️ Display Options")
+    apply_threshold = st.sidebar.toggle("Filter by confidence", value=True)
+    confidence_threshold = st.sidebar.slider(
+        "Confidence threshold",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.6,
+        step=0.01,
+    )
+    misplace_ratio = st.sidebar.slider(
+        "Misplace ratio (eval)",
+        0.01,
+        0.80,
+        0.25,
+        0.01,
+    )
+
+    st.sidebar.divider()
+
+    c_run, c_reset = st.sidebar.columns([2, 1])
+    with c_run:
+        run_btn = st.sidebar.button("🚀 Run Analysis", type="primary", use_container_width=True)
+    with c_reset:
+        if st.sidebar.button("↺ Reset", use_container_width=True):
+            _clear_results()
+            st.session_state.project_root_path = None
+            st.session_state.zip_fingerprint = None
+            st.rerun()
+
+    # ============================================================
+    # MAIN AREA - Results and dashboards (front of user)
+    # ============================================================
+
+    # Top "hero" header
     st.markdown(
         f"""
 <div class="cme-card">
@@ -244,96 +329,8 @@ def page_dashboard() -> None:
         unsafe_allow_html=True,
     )
 
-    st.write("")
-
-    # Central “control panel” (no sidebar-centric UX)
-    left, center, right = st.columns([1, 2.2, 1])
-    with center:
-        st.markdown('<div class="cme-card">', unsafe_allow_html=True)
-        st.subheader("Run analysis")
-
-        project_root: Optional[Path] = None
-
-        # ZIP uploader (outside a form so changes apply immediately)
-        uploaded = st.file_uploader("Upload a zipped Java project", type=["zip"], key="project_zip")
-        zip_fingerprint = (uploaded.name, uploaded.size) if uploaded is not None else None
-
-        if "zip_fingerprint" not in st.session_state:
-            st.session_state.zip_fingerprint = None
-        if "project_root_path" not in st.session_state:
-            st.session_state.project_root_path = None
-
-        # If user uploaded a new ZIP, clear previous results and extract new project
-        if uploaded is not None and zip_fingerprint != st.session_state.zip_fingerprint:
-            _clear_results()
-            project_root = _extract_zip_to_temp(uploaded)
-            st.session_state.project_root_path = str(project_root)
-            st.session_state.zip_fingerprint = zip_fingerprint
-            st.success("ZIP extracted. Ready to run.")
-        elif st.session_state.project_root_path:
-            project_root = Path(st.session_state.project_root_path)
-            st.caption("Current project")
-            st.code(str(project_root))
-        else:
-            st.info("Upload a `.zip` containing your Java project root (the folder that contains the full source tree).")
-
-        st.divider()
-        opt1, opt2, opt3 = st.columns([1, 1, 1])
-        with opt1:
-            enable_dependencies = st.toggle("Dependencies", value=True)
-        with opt2:
-            enable_embeddings = st.toggle("Embeddings", value=True)
-        with opt3:
-            run_evaluation = st.toggle("Evaluation", value=False)
-
-        st.subheader("HuggingFace Settings")
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            hf_api_token = st.text_input("HuggingFace API Token", type="password",
-                                          help="Get your free token at https://huggingface.co/settings/tokens",
-                                          value=HF_API_TOKEN, label_visibility="collapsed")
-        with col2:
-            hf_model = st.selectbox(
-                "LLM Model",
-                ["microsoft/phi-2", "Qwen/Qwen2-0.5B-Instruct", "TinyLlama/TinyLlama-1.1B-Chat-v1.0"],
-                index=0,
-                help="Code-specialized models available via HuggingFace Inference API"
-            )
-
-        use_huggingface = bool(hf_api_token)
-
-        apply_threshold = st.toggle("Apply confidence filter (display only)", value=True)
-        confidence_threshold = st.slider(
-            "Confidence threshold",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.6,
-            step=0.01,
-            help="Filters what you see in the dashboard. It does not change the underlying detection results or CSV export.",
-        )
-        misplace_ratio = st.slider(
-            "Evaluation misplace ratio",
-            0.01,
-            0.80,
-            0.25,
-            0.01,
-            help="Only used when Evaluation is enabled.",
-        )
-
-        c_run, c_reset = st.columns([1, 1])
-        with c_run:
-            run_btn = st.button("Run", type="primary", use_container_width=True)
-        with c_reset:
-            if st.button("Reset results", use_container_width=True):
-                _clear_results()
-                st.session_state.project_root_path = None
-                st.session_state.zip_fingerprint = None
-                st.rerun()
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
     if not run_btn:
-        # If we already have results in session, show them immediately (keeps the app feeling “stateful”)
+        # If we already have results in session, show them immediately (keeps the app feeling "stateful")
         existing_df = st.session_state.get("last_analysis_df", None)
         existing_metrics = st.session_state.get("last_analysis_metrics", None)
         if existing_df is None or existing_metrics is None:
@@ -518,4 +515,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

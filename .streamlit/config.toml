@@ -1,10 +1,7 @@
-[
-theme
-]
+[theme]
 base = "dark"
 primaryColor = "#6366F1"
 backgroundColor = "#0B1020"
 secondaryBackgroundColor = "#111A33"
 textColor = "#F3F4F6"
 font = "sans serif"
-
