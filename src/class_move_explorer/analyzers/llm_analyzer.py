@@ -94,7 +94,12 @@ class LLMAnalyzer:
             
             # 2. Find the best fitting package type
             best_pkg_type, best_score = max(scores.items(), key=lambda x: x[1])
-            best_rule = components[best_pkg_type][0]
+
+            # If rule signals are extremely strong, don't let embeddings override them.
+            best_rule_type, (best_rule, _, _, _) = max(components.items(), key=lambda kv: kv[1][0])
+            if best_rule >= 0.75:
+                best_pkg_type = best_rule_type
+                best_score = scores[best_pkg_type]
             
             # 3. Determine if current package matches best type
             current_type = self._detect_pkg_type(current_pkg)
@@ -126,9 +131,18 @@ class LLMAnalyzer:
             class_info = class_map[name]
             
             # Re-calculate scores to find target
-            scores = {pt: self._calculate_class_score(class_info, pt, dependency_graph, embeddings, class_to_pkg)
-                     for pt in self.package_rules.keys()}
-            target_type, confidence = max(scores.items(), key=lambda x: x[1])
+            comp = {
+                pt: self._calculate_component_scores(class_info, pt, dependency_graph, embeddings, class_to_pkg)
+                for pt in self.package_rules.keys()
+            }
+            # Select by total score by default
+            target_type, (rule_s, _, _, confidence) = max(comp.items(), key=lambda kv: kv[1][3])
+            # But if any rule score is very strong, prefer that type (more deterministic)
+            best_rule_type, (best_rule, _, _, best_total) = max(comp.items(), key=lambda kv: kv[1][0])
+            if best_rule >= 0.75:
+                target_type = best_rule_type
+                # Make confidence reflect strong rule matches (so UI thresholds don't hide obvious cases)
+                confidence = max(best_total, best_rule)
             
             # Generate reasoning text
             reasoning = self._generate_reasoning(class_info, target_type, confidence, dependency_graph)

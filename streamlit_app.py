@@ -272,13 +272,14 @@ def page_dashboard() -> None:
         with opt3:
             run_evaluation = st.toggle("Evaluation", value=False)
 
+        apply_threshold = st.toggle("Apply confidence filter (display only)", value=True)
         confidence_threshold = st.slider(
             "Confidence threshold",
             min_value=0.0,
             max_value=1.0,
             value=0.6,
             step=0.01,
-            help="Recommendations below this threshold will be treated as not-misplaced (matches CLI behavior).",
+            help="Filters what you see in the dashboard. It does not change the underlying detection results or CSV export.",
         )
         misplace_ratio = st.slider(
             "Evaluation misplace ratio",
@@ -337,10 +338,10 @@ def page_dashboard() -> None:
         st.warning("No results produced (no Java classes found or analysis returned empty results).")
         return
 
-    # Apply confidence threshold by flipping low-confidence ones to not-misplaced (matches CLI behavior)
-    if confidence_threshold > 0.6:
-        df = df.copy()
-        df.loc[df["confidence"] < confidence_threshold, "is_misplaced"] = False
+    # Never mutate model decisions for display filtering; keep df as the raw output.
+    df_display = df
+    if apply_threshold and confidence_threshold > 0.0:
+        df_display = df[(df["is_misplaced"] != True) | (df["confidence"] >= confidence_threshold)]  # noqa: E712
 
     metrics = assistant.metrics.metrics_calculated
     st.session_state.last_analysis_df = df
@@ -359,7 +360,7 @@ def page_dashboard() -> None:
 
     with tab_overview:
         st.subheader("Analysis overview")
-        _render_analysis_dashboard(df, metrics)
+        _render_analysis_dashboard(df_display, metrics)
 
         st.divider()
         st.subheader("Export")
@@ -374,7 +375,7 @@ def page_dashboard() -> None:
 
     with tab_table:
         st.subheader("All results")
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
 
     with tab_eval:
         st.subheader("Evaluation")
