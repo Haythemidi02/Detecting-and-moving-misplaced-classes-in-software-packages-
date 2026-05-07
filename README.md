@@ -62,7 +62,17 @@ python -m streamlit run streamlit_app.py
   - **Downloadable CSV** (`class_placement_analysis.csv`)
   - **Dashboard** with KPIs, confidence distribution, top recommendations, full results table, and optional evaluation
 
-> Note: The **Evaluation** tab is most meaningful on projects with multiple Java files/classes. If you upload/select a very small project (e.g., only 1–2 `.java` files), metrics like Precision/Recall may show 0% and won’t be representative.
+#### Evaluation (what it means in this repo)
+This project does **not** train a custom model on a fixed dataset. Instead, it combines:
+- Heuristics/rules + dependency signals
+- A **pretrained** sentence-transformer (semantic embeddings)
+- A lightweight **pretrained** LLM for explanation text
+
+Because of that, evaluation can be done in two ways:
+- **Synthetic benchmark (recommended)**: the app generates many small, well-structured Java projects, intentionally misplaces classes, and reports aggregate Precision/Recall/F1. This gives a **repeatable** score for the current algorithm.
+- **Project corruption test**: intentionally corrupts the **selected input project** and measures recovery. This depends on your input and is most meaningful on projects with many classes.
+
+> Note: If you upload/select a very small project (e.g., only 1–2 `.java` files), project-based metrics like Precision/Recall may show 0% and won’t be representative.
 
 ### 2. Run Formal Evaluation
 To evaluate the tool's accuracy against a test project:

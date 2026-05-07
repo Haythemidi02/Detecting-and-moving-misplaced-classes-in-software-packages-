@@ -382,19 +382,73 @@ def page_dashboard() -> None:
 
     with tab_eval:
         st.subheader("Evaluation")
-        stored = eval_results if eval_results is not None else st.session_state.get("last_eval_results", None)
-        if not stored:
-            st.info("Enable **Run evaluation after analysis** in the sidebar to compute Precision / Recall / F1.")
-        elif "error" in stored:
-            st.error(stored.get("error", "Evaluation failed."))
+        st.caption("Choose between input-dependent corruption evaluation, or a repeatable synthetic benchmark.")
+
+        mode = st.radio(
+            "Mode",
+            ["Synthetic benchmark (recommended)", "Project corruption (depends on your input)"],
+            horizontal=True,
+        )
+
+        if mode.startswith("Synthetic"):
+            st.markdown('<div class="cme-card">', unsafe_allow_html=True)
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                bench_projects = st.number_input("Projects", min_value=5, max_value=200, value=25, step=5)
+            with c2:
+                bench_classes = st.number_input("Classes per type", min_value=1, max_value=10, value=3, step=1)
+            with c3:
+                bench_ratio = st.slider("Misplace ratio", 0.05, 0.70, 0.25, 0.05)
+
+            bench_seed = st.number_input("Seed", min_value=0, max_value=1_000_000, value=42, step=1)
+            run_bench = st.button("Run benchmark", type="primary", use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+            if run_bench:
+                assistant = _get_assistant()
+                evaluator = Evaluator(assistant)
+                with st.spinner("Running synthetic benchmark…"):
+                    bench = evaluator.run_synthetic_benchmark(
+                        num_projects=int(bench_projects),
+                        classes_per_type=int(bench_classes),
+                        misplace_ratio=float(bench_ratio),
+                        seed=int(bench_seed),
+                    )
+                st.session_state.last_benchmark_results = bench
+
+            bench = st.session_state.get("last_benchmark_results", None)
+            if not bench:
+                st.info("Run the benchmark to get stable Precision/Recall/F1 results for the current algorithm.")
+            elif "error" in bench:
+                st.error(bench.get("error", "Benchmark failed."))
+            else:
+                cols = st.columns(4)
+                cols[0].metric("Precision (mean)", f"{bench.get('precision_mean', 0.0):.2%}")
+                cols[1].metric("Recall (mean)", f"{bench.get('recall_mean', 0.0):.2%}")
+                cols[2].metric("F1 (mean)", f"{bench.get('f1_mean', 0.0):.2%}")
+                cols[3].metric("Suggestion accuracy (mean)", f"{bench.get('suggestion_accuracy_mean', 0.0):.2%}")
+                st.caption(
+                    f"Std dev — P: {bench.get('precision_std', 0.0):.2%} • "
+                    f"R: {bench.get('recall_std', 0.0):.2%} • "
+                    f"F1: {bench.get('f1_std', 0.0):.2%} • "
+                    f"Acc: {bench.get('suggestion_accuracy_std', 0.0):.2%}"
+                )
+                st.divider()
+                st.json(bench)
         else:
-            cols = st.columns(4)
-            cols[0].metric("Precision", f"{stored.get('precision', 0.0):.2%}")
-            cols[1].metric("Recall", f"{stored.get('recall', 0.0):.2%}")
-            cols[2].metric("F1 score", f"{stored.get('f1_score', 0.0):.2%}")
-            cols[3].metric("Suggestion accuracy", f"{stored.get('suggestion_accuracy', 0.0):.2%}")
-            st.divider()
-            st.json(stored)
+            stored = eval_results if eval_results is not None else st.session_state.get("last_eval_results", None)
+            if not stored:
+                st.info("Enable **Evaluation** before running analysis to compute Precision / Recall / F1 on your current input.")
+            elif "error" in stored:
+                st.error(stored.get("error", "Evaluation failed."))
+            else:
+                cols = st.columns(4)
+                cols[0].metric("Precision", f"{stored.get('precision', 0.0):.2%}")
+                cols[1].metric("Recall", f"{stored.get('recall', 0.0):.2%}")
+                cols[2].metric("F1 score", f"{stored.get('f1_score', 0.0):.2%}")
+                cols[3].metric("Suggestion accuracy", f"{stored.get('suggestion_accuracy', 0.0):.2%}")
+                st.divider()
+                st.json(stored)
 
 
 def main() -> None:

@@ -5,6 +5,11 @@ import random
 import pandas as pd
 from typing import List, Dict, Tuple
 from class_move_explorer.core.assistant import MoveClassAssistant
+from class_move_explorer.evaluation.synthetic_benchmark import (
+    SyntheticProjectSpec,
+    generate_synthetic_project,
+    corrupt_packages,
+)
 
 
 class Evaluator:
@@ -109,4 +114,74 @@ class Evaluator:
             "fp": fp,
             "fn": fn,
             "ground_truth_count": len(ground_truth_names)
+        }
+
+    def run_synthetic_benchmark(
+        self,
+        *,
+        num_projects: int = 25,
+        classes_per_type: int = 3,
+        misplace_ratio: float = 0.25,
+        seed: int = 42,
+    ) -> Dict:
+        """
+        Repeatable benchmark that does NOT depend on user input:
+        generate many synthetic well-placed projects, corrupt them, and measure recovery.
+        """
+        rng = random.Random(seed)
+        spec = SyntheticProjectSpec(classes_per_type=classes_per_type, base_package="com.example")
+
+        per_project: List[Dict] = []
+
+        for _ in range(num_projects):
+            project_seed = rng.randint(0, 10_000_000)
+            classes = generate_synthetic_project(spec, seed=project_seed)
+            corrupted, gt = corrupt_packages(classes, misplace_ratio=misplace_ratio, seed=project_seed + 1, base_package=spec.base_package)
+
+            # Per-run ground truth
+            self.ground_truth = gt
+
+            dep_graph = (
+                self.assistant.dependency_analyzer.analyze_dependencies(corrupted)
+                if self.assistant.dependency_analyzer is not None
+                else {}
+            )
+            embeddings = (
+                self.assistant.embedding_analyzer.compute_embeddings(corrupted)
+                if self.assistant.embedding_analyzer is not None
+                else {}
+            )
+
+            detected = self.assistant.llm_analyzer.identify_misplaced_classes(corrupted, dep_graph, embeddings)
+            suggestions = self.assistant.llm_analyzer.suggest_target_packages(detected, corrupted, dep_graph, embeddings)
+
+            metrics = self._calculate_performance_metrics(len(corrupted), detected, suggestions)
+            per_project.append(metrics)
+
+        df = pd.DataFrame(per_project)
+        if df.empty:
+            return {"error": "Benchmark produced no results"}
+
+        def _mean(col: str) -> float:
+            return float(df[col].mean()) if col in df else 0.0
+
+        def _std(col: str) -> float:
+            return float(df[col].std(ddof=0)) if col in df else 0.0
+
+        return {
+            "mode": "synthetic_benchmark",
+            "num_projects": num_projects,
+            "classes_per_type": classes_per_type,
+            "misplace_ratio": misplace_ratio,
+            "seed": seed,
+            "precision_mean": _mean("precision"),
+            "recall_mean": _mean("recall"),
+            "f1_mean": _mean("f1_score"),
+            "suggestion_accuracy_mean": _mean("suggestion_accuracy"),
+            "precision_std": _std("precision"),
+            "recall_std": _std("recall"),
+            "f1_std": _std("f1_score"),
+            "suggestion_accuracy_std": _std("suggestion_accuracy"),
+            "avg_total_classes": _mean("total_classes"),
+            "avg_misplaced_ground_truth": _mean("misplaced_ground_truth"),
         }
