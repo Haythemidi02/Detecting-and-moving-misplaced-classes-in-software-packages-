@@ -107,25 +107,6 @@ def _configure_assistant(assistant: MoveClassAssistant, enable_dependencies: boo
     return assistant
 
 
-def _pick_local_directory() -> Optional[str]:
-    """
-    Best-effort local folder picker.
-    Works when Streamlit is running locally with GUI access.
-    """
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        path = filedialog.askdirectory(title="Select Java project folder")
-        root.destroy()
-        return path or None
-    except Exception:
-        return None
-
-
 def _extract_zip_to_temp(uploaded_zip: st.runtime.uploaded_file_manager.UploadedFile) -> Path:
     base_dir = Path(tempfile.mkdtemp(prefix="classmoveexplorer_"))
     zip_path = base_dir / "project.zip"
@@ -245,35 +226,15 @@ def page_dashboard() -> None:
         st.markdown('<div class="cme-card">', unsafe_allow_html=True)
         st.subheader("Run analysis")
 
-        if "selected_project_path" not in st.session_state:
-            st.session_state.selected_project_path = None
-
         project_root: Optional[Path] = None
 
         with st.form("run_form", border=False):
-            source = st.radio("Input type", ["Local folder", "Upload ZIP"], horizontal=True)
-
-            if source == "Local folder":
-                pick = st.form_submit_button("Pick folder…")
-                if pick:
-                    picked = _pick_local_directory()
-                    if picked:
-                        st.session_state.selected_project_path = picked
-                    else:
-                        st.error("Folder picker is unavailable here. Please switch to **Upload ZIP**.")
-
-                if st.session_state.selected_project_path:
-                    st.caption("Selected folder")
-                    st.code(st.session_state.selected_project_path)
-                    project_root = Path(st.session_state.selected_project_path)
-                else:
-                    st.info("Click **Pick folder…** to select your Java project directory.")
+            uploaded = st.file_uploader("Upload a zipped Java project", type=["zip"])
+            if uploaded is not None:
+                project_root = _extract_zip_to_temp(uploaded)
+                st.success("ZIP extracted. Ready to run.")
             else:
-                uploaded = st.file_uploader("Upload a zipped Java project", type=["zip"])
-                if uploaded is not None:
-                    project_root = _extract_zip_to_temp(uploaded)
-                    st.session_state.selected_project_path = str(project_root)
-                    st.success("ZIP extracted. Ready to run.")
+                st.info("Upload a `.zip` containing your Java project root (the folder that contains the full source tree).")
 
             st.divider()
             opt1, opt2, opt3 = st.columns([1, 1, 1])
@@ -315,7 +276,7 @@ def page_dashboard() -> None:
             return
 
     if project_root is None:
-        st.error("Please select a folder or upload a ZIP first.")
+        st.error("Please upload a ZIP first.")
         return
 
     if not project_root.exists() or not project_root.is_dir():

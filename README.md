@@ -56,8 +56,7 @@ python -m streamlit run streamlit_app.py
 ```
 
 - **Inputs**:
-  - **Local folder selection** (via a folder picker when running locally)
-  - **ZIP upload** (`.zip`) containing your Java project
+  - **ZIP upload only** (`.zip`) containing your Java project root
 - **Outputs**:
   - **Downloadable CSV** (`class_placement_analysis.csv`)
   - **Dashboard** with KPIs, confidence distribution, top recommendations, full results table, and optional evaluation
