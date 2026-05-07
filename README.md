@@ -49,11 +49,20 @@ python scripts/run_cli.py /path/to/your/java/project --output results.csv --verb
 ```
 
 ### 1b. Run the Streamlit UI
-To use a simple web UI that lets you run analyses, view metrics, and browse output files:
+To use a modern web UI (Dashboard) that lets you select a project, run analysis, download the CSV, and view results:
 
 ```bash
 python -m streamlit run streamlit_app.py
 ```
+
+- **Inputs**:
+  - **Local folder selection** (via a folder picker when running locally)
+  - **ZIP upload** (`.zip`) containing your Java project
+- **Outputs**:
+  - **Downloadable CSV** (`class_placement_analysis.csv`)
+  - **Dashboard** with KPIs, confidence distribution, top recommendations, full results table, and optional evaluation
+
+> Note: The **Evaluation** tab is most meaningful on projects with multiple Java files/classes. If you upload/select a very small project (e.g., only 1–2 `.java` files), metrics like Precision/Recall may show 0% and won’t be representative.
 
 ### 2. Run Formal Evaluation
 To evaluate the tool's accuracy against a test project:
