@@ -69,8 +69,35 @@ This project does **not** train a custom model on a fixed dataset. Instead, it c
 - A lightweight **pretrained** LLM for explanation text
 
 Because of that, evaluation can be done in two ways:
-- **Synthetic benchmark (recommended)**: the app generates many small, well-structured Java projects, intentionally misplaces classes, and reports aggregate Precision/Recall/F1. This gives a **repeatable** score for the current algorithm.
-- **Project corruption test**: intentionally corrupts the **selected input project** and measures recovery. This depends on your input and is most meaningful on projects with many classes.
+- **Synthetic benchmark (recommended)**: repeatable, input-independent score for the current algorithm.
+- **Project corruption test**: input-dependent score (varies by the project you upload/select).
+
+##### 1) Synthetic benchmark (repeatable, recommended)
+The benchmark runs a loop over \(N\) generated “toy projects”:
+
+1. **Generate** a small, well-placed Java-like project *in memory* (no file parsing) with packages such as:
+   - `com.example.controller`, `com.example.service`, `com.example.model`, `com.example.repository`, `com.example.util`, `com.example.config`, `com.example.exception`
+2. **Corrupt** it by intentionally changing the package of a subset of classes:
+   - \(k = \max(1, \lfloor \text{total\_classes} \cdot \text{misplace\_ratio} \rfloor)\)
+   - This produces a **ground truth** set \(GT\) = “classes we intentionally misplaced”.
+3. Run the normal pipeline (dependency analysis / embeddings if enabled) to **detect** misplaced classes \(DET\) and **suggest** target packages.
+4. Compute metrics:
+   - \(TP = |GT \cap DET|\)
+   - \(FP = |DET \setminus GT|\)
+   - \(FN = |GT \setminus DET|\)
+   - Precision \(= TP/(TP+FP)\), Recall \(= TP/(TP+FN)\), F1 is the harmonic mean.
+5. Aggregate (mean/std) metrics across the \(N\) projects.
+
+In the Streamlit app: **Evaluation → Synthetic benchmark (recommended)**.
+
+##### 2) Project corruption test (depends on your input)
+This is a “self-check” on the project you uploaded/selected:
+
+1. Parse the selected project to collect class metadata.
+2. Randomly pick a subset of classes to misplace and record their original packages (ground truth).
+3. Run the pipeline on the corrupted metadata and score Precision/Recall/F1 as above.
+
+In the Streamlit app: enable **Evaluation** before clicking **Run**, then open **Evaluation → Project corruption**.
 
 > Note: If you upload/select a very small project (e.g., only 1–2 `.java` files), project-based metrics like Precision/Recall may show 0% and won’t be representative.
 
