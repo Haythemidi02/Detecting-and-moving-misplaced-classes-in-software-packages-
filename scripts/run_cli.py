@@ -145,13 +145,13 @@ Examples:
         misplaced_count = len(results_df[results_df['is_misplaced'] == True])
         total_count = len(results_df)
         
-        print(f"\n✅ Analysis Complete!")
+        print("\nAnalysis Complete!")
         print(f"   Total classes: {total_count}")
         print(f"   Misplaced classes: {misplaced_count}")
         print(f"   Misplacement rate: {misplaced_count/total_count:.1%}")
         
         if misplaced_count > 0:
-            print(f"\n🔍 Top Recommendations:")
+            print("\nTop Recommendations:")
             misplaced_df = results_df[results_df['is_misplaced'] == True].sort_values('confidence', ascending=False)
             
             for i, (_, row) in enumerate(misplaced_df.head(5).iterrows(), 1):
@@ -163,17 +163,17 @@ Examples:
                 print()
         
         if not args.metrics_only:
-            print(f"📄 Detailed results saved to: {args.output}")
+            print(f"Detailed results saved to: {args.output}")
         
         # Display metrics if verbose
         if args.verbose:
             assistant.metrics.display_metrics(assistant.metrics.metrics_calculated)
         
     except KeyboardInterrupt:
-        print("\n⚠️  Analysis interrupted by user")
+        print("\nAnalysis interrupted by user")
         sys.exit(1)
     except Exception as e:
-        print(f"❌ Error during analysis: {e}")
+        print(f"Error during analysis: {e}")
         if args.verbose:
             import traceback
             traceback.print_exc()

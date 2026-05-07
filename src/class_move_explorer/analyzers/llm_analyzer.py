@@ -84,20 +84,31 @@ class LLMAnalyzer:
             
             # 1. Calculate scores for all possible package types
             scores = {}
+            components = {}
             for pkg_type in self.package_rules.keys():
-                score = self._calculate_class_score(class_info, pkg_type, dependency_graph, embeddings, class_to_pkg)
-                scores[pkg_type] = score
+                rule_s, sem_s, struct_s, total = self._calculate_component_scores(
+                    class_info, pkg_type, dependency_graph, embeddings, class_to_pkg
+                )
+                scores[pkg_type] = total
+                components[pkg_type] = (rule_s, sem_s, struct_s, total)
             
             # 2. Find the best fitting package type
             best_pkg_type, best_score = max(scores.items(), key=lambda x: x[1])
+            best_rule = components[best_pkg_type][0]
             
             # 3. Determine if current package matches best type
             current_type = self._detect_pkg_type(current_pkg)
+            current_score = scores.get(current_type, 0.0) if current_type != "unknown" else 0.0
             
-            # If current type is 'unknown' or doesn't match best type, and best score is high
-            # Lowered threshold to 0.60
-            if best_score > 0.60:
-                if current_type != best_pkg_type:
+            # Decision logic
+            # - Strong rule signals (e.g., "*Controller" or annotations) should flag misplacement even if semantic score is low.
+            # - Otherwise require a minimum confidence and a margin over the current package-type score to reduce false positives.
+            if current_type != best_pkg_type:
+                strong_rule_signal = best_rule >= 0.75
+                confident_enough = best_score >= 0.50
+                margin_ok = (best_score - current_score) >= 0.10 if current_type != "unknown" else best_score >= 0.45
+
+                if strong_rule_signal or (confident_enough and margin_ok):
                     misplaced.append(class_name)
                     
         return misplaced
@@ -136,23 +147,32 @@ class LLMAnalyzer:
                              dependency_graph: Dict, embeddings: Dict,
                              class_to_pkg: Dict = None) -> float:
         """Weighted score for a class fitting into a package type"""
+        return self._calculate_component_scores(class_info, target_type, dependency_graph, embeddings, class_to_pkg)[3]
+
+    def _calculate_component_scores(
+        self,
+        class_info: Dict,
+        target_type: str,
+        dependency_graph: Dict,
+        embeddings: Dict,
+        class_to_pkg: Dict = None,
+    ) -> tuple:
+        """Return (rule_score, semantic_score, structural_score, total_score)."""
         embeddings = embeddings or {}
         rules = self.package_rules[target_type]
         name_lower = class_info['class_name'].lower()
-        
+        annotations = class_info.get("annotations", []) or []
+
         # 1. Rule-based Score (Name & Annotations) - Weight: 0.4
         rule_score = 0.0
-        # Name patterns
         if any(re.match(p.lower(), name_lower) for p in rules['patterns']):
             rule_score += 0.5
-        # Keywords
         if any(k in name_lower for k in rules['keywords']):
             rule_score += 0.3
-        # Annotations
-        matching_anns = [a for a in class_info['annotations'] if a in rules['annotations']]
+        matching_anns = [a for a in annotations if a in rules['annotations']]
         rule_score += min(len(matching_anns) * 0.2, 0.4)
         rule_score = min(rule_score, 1.0)
-        
+
         # 2. Semantic Score (Embeddings) - Weight: 0.4
         semantic_score = 0.0
         if 'class_embeddings' in embeddings and 'package_type_embeddings' in embeddings:
@@ -160,9 +180,9 @@ class LLMAnalyzer:
             pkg_vec = embeddings['package_type_embeddings'].get(target_type)
             if class_vec is not None and pkg_vec is not None:
                 semantic_score = self._cosine_similarity(class_vec, pkg_vec)
-        
+
         # 3. Structural Score (Dependencies) - Weight: 0.2
-        structural_score = 0.5 # Neutral baseline
+        structural_score = 0.5  # Neutral baseline
         if class_to_pkg and dependency_graph:
             deps = dependency_graph.get('class_dependencies', {}).get(class_info['class_name'], [])
             rev_deps = dependency_graph.get('reverse_dependencies', {}).get(class_info['class_name'], [])
@@ -176,9 +196,9 @@ class LLMAnalyzer:
                         matching_related += 1
 
                 structural_score = matching_related / len(all_related)
-        
+
         total_score = (rule_score * 0.4) + (semantic_score * 0.4) + (structural_score * 0.2)
-        return total_score
+        return rule_score, semantic_score, structural_score, total_score
 
     def _generate_reasoning(self, class_info: Dict, target_type: str, 
                           confidence: float, dependency_graph: Dict) -> str:

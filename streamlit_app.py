@@ -19,6 +19,13 @@ from class_move_explorer.evaluation.evaluator import Evaluator
 APP_TITLE = "ClassMoveExplorer"
 APP_SUBTITLE = "Detect misplaced Java classes and recommend better package locations."
 
+RESULT_KEYS = (
+    "last_analysis_df",
+    "last_analysis_metrics",
+    "last_eval_results",
+    "last_benchmark_results",
+)
+
 
 def _set_page_config() -> None:
     st.set_page_config(
@@ -130,6 +137,11 @@ def _count_java_files(project_root: Path) -> int:
         return 0
 
 
+def _clear_results() -> None:
+    for k in RESULT_KEYS:
+        st.session_state.pop(k, None)
+
+
 def _kpi(label: str, value: str, hint: str = "") -> None:
     st.markdown(
         f"""
@@ -228,41 +240,64 @@ def page_dashboard() -> None:
 
         project_root: Optional[Path] = None
 
-        with st.form("run_form", border=False):
-            uploaded = st.file_uploader("Upload a zipped Java project", type=["zip"])
-            if uploaded is not None:
-                project_root = _extract_zip_to_temp(uploaded)
-                st.success("ZIP extracted. Ready to run.")
-            else:
-                st.info("Upload a `.zip` containing your Java project root (the folder that contains the full source tree).")
+        # ZIP uploader (outside a form so changes apply immediately)
+        uploaded = st.file_uploader("Upload a zipped Java project", type=["zip"], key="project_zip")
+        zip_fingerprint = (uploaded.name, uploaded.size) if uploaded is not None else None
 
-            st.divider()
-            opt1, opt2, opt3 = st.columns([1, 1, 1])
-            with opt1:
-                enable_dependencies = st.toggle("Dependencies", value=True)
-            with opt2:
-                enable_embeddings = st.toggle("Embeddings", value=True)
-            with opt3:
-                run_evaluation = st.toggle("Evaluation", value=False)
+        if "zip_fingerprint" not in st.session_state:
+            st.session_state.zip_fingerprint = None
+        if "project_root_path" not in st.session_state:
+            st.session_state.project_root_path = None
 
-            confidence_threshold = st.slider(
-                "Confidence threshold",
-                min_value=0.0,
-                max_value=1.0,
-                value=0.6,
-                step=0.01,
-                help="Recommendations below this threshold will be treated as not-misplaced (matches CLI behavior).",
-            )
-            misplace_ratio = st.slider(
-                "Evaluation misplace ratio",
-                0.01,
-                0.80,
-                0.25,
-                0.01,
-                help="Only used when Evaluation is enabled.",
-            )
+        # If user uploaded a new ZIP, clear previous results and extract new project
+        if uploaded is not None and zip_fingerprint != st.session_state.zip_fingerprint:
+            _clear_results()
+            project_root = _extract_zip_to_temp(uploaded)
+            st.session_state.project_root_path = str(project_root)
+            st.session_state.zip_fingerprint = zip_fingerprint
+            st.success("ZIP extracted. Ready to run.")
+        elif st.session_state.project_root_path:
+            project_root = Path(st.session_state.project_root_path)
+            st.caption("Current project")
+            st.code(str(project_root))
+        else:
+            st.info("Upload a `.zip` containing your Java project root (the folder that contains the full source tree).")
 
-            run_btn = st.form_submit_button("Run", type="primary", use_container_width=True)
+        st.divider()
+        opt1, opt2, opt3 = st.columns([1, 1, 1])
+        with opt1:
+            enable_dependencies = st.toggle("Dependencies", value=True)
+        with opt2:
+            enable_embeddings = st.toggle("Embeddings", value=True)
+        with opt3:
+            run_evaluation = st.toggle("Evaluation", value=False)
+
+        confidence_threshold = st.slider(
+            "Confidence threshold",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.6,
+            step=0.01,
+            help="Recommendations below this threshold will be treated as not-misplaced (matches CLI behavior).",
+        )
+        misplace_ratio = st.slider(
+            "Evaluation misplace ratio",
+            0.01,
+            0.80,
+            0.25,
+            0.01,
+            help="Only used when Evaluation is enabled.",
+        )
+
+        c_run, c_reset = st.columns([1, 1])
+        with c_run:
+            run_btn = st.button("Run", type="primary", use_container_width=True)
+        with c_reset:
+            if st.button("Reset results", use_container_width=True):
+                _clear_results()
+                st.session_state.project_root_path = None
+                st.session_state.zip_fingerprint = None
+                st.rerun()
 
         st.markdown("</div>", unsafe_allow_html=True)
 

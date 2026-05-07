@@ -23,13 +23,13 @@ class MoveClassAssistant:
         
     def analyze_and_recommend(self, project_path: str, output_csv: str = "class_placement_analysis.csv") -> pd.DataFrame:
         """Main entry point for analyzing Java project and generating recommendations"""
-        print(f"\n🚀 Starting Analysis: {project_path}")
+        print(f"\nStarting Analysis: {project_path}")
         start_time = datetime.now()
         
         # 1. Parse Project
         classes_data = self.project_analyzer.analyze_project(project_path)
         if not classes_data:
-            print("❌ No Java classes found.")
+            print("No Java classes found.")
             return pd.DataFrame()
             
         # 2. Structural Analysis
