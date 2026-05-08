@@ -1,130 +1,132 @@
-# ClassMoveExplorer
+# 🧭 ClassMoveExplorer
 
-ClassMoveExplorer is a sophisticated Java class placement analyzer that identifies misplaced classes in Java software packages and suggests optimal relocations based on structural, semantic, and architectural patterns.
+[![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/)
+[![Streamlit App](https://img.shields.io/badge/Streamlit-App-FF4B4B)](https://streamlit.io/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Java Analysis](https://img.shields.io/badge/Analysis-Java-orange)](https://www.java.com/)
 
-## 🚀 Key Features
+**ClassMoveExplorer** is a research-driven tool designed to automate the detection of misplaced classes in Java software architectures. It combines static analysis, semantic embeddings, and Large Language Models (LLMs) to identify architectural violations and suggest optimal package relocations with human-readable reasoning.
 
-- **AST-Based Analysis**: Precise Java source code parsing using `javalang` to extract method signatures, field types, and annotations.
-- **Structural Dependency Graph**: Deep analysis of class relationships including inheritance, field types, and method parameters.
-- **Cohesion & Coupling Metrics**: Calculates Package Cohesion, Afferent/Efferent coupling, and LCOM to identify architectural violations.
-- **Semantic reasoning**: Uses Sentence Transformers (`all-MiniLM-L6-v2`) to compare class intent with package definitions.
-- **LLM Reasoning Engine**: Leverages `distilgpt2` to generate human-readable reasoning for every relocation suggestion.
-- **Evaluation Framework**: Built-in ground-truth evaluator to measure Precision, Recall, and F1-score via intentional project "corruption" tests.
+---
+
+## 🌟 Key Features
+
+-   **🔍 Multi-Layered Analysis**:
+    -   **Structural**: AST-based parsing (via `javalang`) to extract dependencies, inheritance, and field types.
+    -   **Semantic**: Intent-based comparison using Sentence Transformers (`all-MiniLM-L6-v2`) to match class purpose with package context.
+    -   **Reasoning**: LLM-powered explanation engine (supporting Phi-2, Qwen, TinyLlama) to justify every relocation.
+-   **📈 Intelligent Metrics**: Calculates Package Cohesion, Afferent/Efferent coupling, and LCOM to identify architectural bottlenecks.
+-   **🖥️ Modern Dashboard**: A Streamlit-based UI for project visualization, KPI tracking, and interactive analysis results.
+-   **🧪 Robust Evaluation**:
+    -   **Synthetic Benchmark**: Automated testing on $N$ generated "toy projects" to measure baseline performance.
+    -   **Project Corruption Test**: Self-check mechanism that intentionally misplaces classes in your own project to verify detection accuracy.
+
+---
+
+## 🏗️ Architecture: How it Works
+
+ClassMoveExplorer operates on a "Three Pillars" methodology:
+
+1.  **Structural Mapping**: We build a directed dependency graph of the entire project. Classes with high external coupling and low internal cohesion are flagged.
+2.  **Semantic Alignment**: Using NLP, we compare the class's docstrings, method names, and fields against the "semantic signature" of its current and potential packages.
+3.  **LLM Synthesis**: An LLM reviews the findings from the first two pillars to provide a final recommendation and a plain-English explanation for developers.
+
+---
 
 ## 📁 Project Structure
 
 ```text
 root/
 ├── src/
-│   └── class_move_explorer/        # Core library package
+│   └── class_move_explorer/        # Core library
 │       ├── analyzers/              # Java, Dependency, Embedding, and LLM analyzers
 │       ├── core/                   # Orchestration (MoveClassAssistant)
-│       ├── utils/                  # Metrics and formatting
-│       └── evaluation/             # Ground-truth testing framework
-├── scripts/                        # Executable CLI and verification scripts
-├── examples/                       # Usage demonstrations
-└── test_project/                   # Synthetic test data
+│       ├── evaluation/             # Synthetic & Project evaluation logic
+│       └── utils/                  # Metrics and formatting utilities
+├── streamlit_app.py                # Main Dashboard application
+├── scripts/                        # CLI tools and verification scripts
+├── examples/                       # Python usage demonstrations
+├── test_project/                   # Synthetic Java test data
+└── requirements.txt                # Dependency list
 ```
+
+---
 
 ## 🛠️ Installation
 
-1. Clone the repository:
+### 1. Prerequisites
+- **Python 3.8+**
+- **Java Development Kit (JDK)** (Required for parsing `.java` files)
+
+### 2. Setup
 ```bash
+# Clone the repository
 git clone https://github.com/Haythemidi02/Detecting-and-moving-misplaced-classes-in-software-packages-
 cd Detecting-and-moving-misplaced-classes-in-software-packages-
-```
 
-2. Install dependencies:
-```bash
+# Install dependencies
 pip install -r requirements.txt
 ```
 
+### 3. Configuration
+Create a `.env` file in the root directory to enable HuggingFace LLM support:
+```env
+HF_API_TOKEN=your_huggingface_token_here
+```
+
+---
+
 ## 📖 Usage
 
-### 1. Run Analysis via CLI
-The fastest way to analyze a project is using the provided CLI script:
-
+### 🚀 Streamlit Dashboard (Recommended)
+The most user-friendly way to interact with the tool:
 ```bash
-python scripts/run_cli.py /path/to/your/java/project --output results.csv --verbose
+streamlit run streamlit_app.py
+```
+- **Upload**: Drop a `.zip` of your Java project.
+- **Analyze**: Visualize KPIs, confidence distributions, and top recommendations.
+- **Export**: Download results as a structured `.csv`.
+
+### 💻 Command Line Interface (CLI)
+For batch processing or integration into CI/CD:
+```bash
+python scripts/run_cli.py /path/to/java/project --output results.csv --verbose
 ```
 
-### 1b. Run the Streamlit UI
-To use a modern web UI (Dashboard) that lets you select a project, run analysis, download the CSV, and view results:
-
-```bash
-python -m streamlit run streamlit_app.py
-```
-
-- **Inputs**:
-  - **ZIP upload only** (`.zip`) containing your Java project root
-- **Outputs**:
-  - **Downloadable CSV** (`class_placement_analysis.csv`)
-  - **Dashboard** with KPIs, confidence distribution, top recommendations, full results table, and optional evaluation
-
-#### Evaluation (what it means in this repo)
-This project does **not** train a custom model on a fixed dataset. Instead, it combines:
-- Heuristics/rules + dependency signals
-- A **pretrained** sentence-transformer (semantic embeddings)
-- A lightweight **pretrained** LLM for explanation text
-
-Because of that, evaluation can be done in two ways:
-- **Synthetic benchmark (recommended)**: repeatable, input-independent score for the current algorithm.
-- **Project corruption test**: input-dependent score (varies by the project you upload/select).
-
-##### 1) Synthetic benchmark (repeatable, recommended)
-The benchmark runs a loop over \(N\) generated “toy projects”:
-
-1. **Generate** a small, well-placed Java-like project *in memory* (no file parsing) with packages such as:
-   - `com.example.controller`, `com.example.service`, `com.example.model`, `com.example.repository`, `com.example.util`, `com.example.config`, `com.example.exception`
-2. **Corrupt** it by intentionally changing the package of a subset of classes:
-   - \(k = \max(1, \lfloor \text{total\_classes} \cdot \text{misplace\_ratio} \rfloor)\)
-   - This produces a **ground truth** set \(GT\) = “classes we intentionally misplaced”.
-3. Run the normal pipeline (dependency analysis / embeddings if enabled) to **detect** misplaced classes \(DET\) and **suggest** target packages.
-4. Compute metrics:
-   - \(TP = |GT \cap DET|\)
-   - \(FP = |DET \setminus GT|\)
-   - \(FN = |GT \setminus DET|\)
-   - Precision \(= TP/(TP+FP)\), Recall \(= TP/(TP+FN)\), F1 is the harmonic mean.
-5. Aggregate (mean/std) metrics across the \(N\) projects.
-
-In the Streamlit app: **Evaluation → Synthetic benchmark (recommended)**.
-
-##### 2) Project corruption test (depends on your input)
-This is a “self-check” on the project you uploaded/selected:
-
-1. Parse the selected project to collect class metadata.
-2. Randomly pick a subset of classes to misplace and record their original packages (ground truth).
-3. Run the pipeline on the corrupted metadata and score Precision/Recall/F1 as above.
-
-In the Streamlit app: enable **Evaluation** before clicking **Run**, then open **Evaluation → Project corruption**.
-
-> Note: If you upload/select a very small project (e.g., only 1–2 `.java` files), project-based metrics like Precision/Recall may show 0% and won’t be representative.
-
-### 2. Run Formal Evaluation
-To evaluate the tool's accuracy against a test project:
-
-```bash
-python scripts/verify_rebuild.py
-```
-
-### 3. Programmatic Usage
+### 🐍 Programmatic Usage
 ```python
-import sys, os
-sys.path.append(os.path.abspath("src"))
 from class_move_explorer.core.assistant import MoveClassAssistant
 
-assistant = MoveClassAssistant()
+# Initialize the assistant
+assistant = MoveClassAssistant(use_huggingface=True)
+
+# Run analysis
 results = assistant.analyze_and_recommend(
-    project_path="/path/to/project",
-    output_csv="analysis.csv"
+    project_path="./my_java_project",
+    output_csv="analysis_results.csv"
 )
+
+# Access calculated metrics
+print(assistant.metrics.metrics_calculated)
 ```
 
-## 📊 Requirements
+---
 
-- Python 3.8+
-- Java (for project analysis)
-- Dependencies: `javalang`, `transformers`, `sentence-transformers`, `torch`, `pandas`, `scikit-learn`
+## 🧪 Evaluation Methodology
+
+### 1. Synthetic Benchmark
+Repeatable, input-independent score. It generates $N$ small projects in memory, corrupts them, and measures detection accuracy.
+*   **Metric Goal**: Evaluate the raw algorithmic performance.
+
+### 2. Project Corruption Test
+Input-dependent. It takes the project you uploaded, randomly misplaces a subset of classes, and tests if the tool can find them.
+*   **Metric Goal**: Evaluate how well the tool adapts to your specific coding style.
+
+---
 
 ## 📝 License
-MIT License
+
+Distributed under the MIT License. See `LICENSE` for more information.
+
+---
+*Created with ❤️ for Architectural Excellence in Software Engineering.*
