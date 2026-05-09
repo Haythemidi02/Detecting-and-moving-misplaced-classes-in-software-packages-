@@ -24,8 +24,10 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "src")))
 # Load HuggingFace API token from .env file
 load_dotenv()
 HF_API_TOKEN = os.environ.get("HF_API_TOKEN", "")
+HF_MODEL = os.environ.get("HF_MODEL", "")
 
 from class_move_explorer.core.assistant import MoveClassAssistant
+from class_move_explorer.analyzers.llm_analyzer import DEFAULT_HF_MODEL, LLAMA_HF_MODELS
 from class_move_explorer.evaluation.evaluator import Evaluator
 
 
@@ -117,14 +119,14 @@ def _inject_css() -> None:
 
 
 @st.cache_resource
-def _get_assistant(use_huggingface: bool = True, hf_model: str = "microsoft/phi-2",
+def _get_assistant(use_huggingface: bool = True, hf_model: str = DEFAULT_HF_MODEL,
                    hf_api_token: str = None) -> MoveClassAssistant:
     return MoveClassAssistant(use_huggingface=use_huggingface, hf_model=hf_model,
                                hf_api_token=hf_api_token)
 
 
 def _configure_assistant(assistant: MoveClassAssistant, enable_dependencies: bool, enable_embeddings: bool,
-                        use_huggingface: bool = True, hf_model: str = "microsoft/phi-2",
+                        use_huggingface: bool = True, hf_model: str = DEFAULT_HF_MODEL,
                         hf_api_token: str = None) -> MoveClassAssistant:
     # Mutates assistant for this run (intentional: avoids re-loading heavy models repeatedly).
     assistant.dependency_analyzer = assistant.dependency_analyzer if enable_dependencies else None
@@ -284,13 +286,16 @@ def page_dashboard() -> None:
 
     # HuggingFace Settings
     st.sidebar.subheader("🤖 HuggingFace Settings")
+    default_model = HF_MODEL if HF_MODEL in LLAMA_HF_MODELS else DEFAULT_HF_MODEL
     hf_model = st.sidebar.selectbox(
         "Model",
-        ["microsoft/phi-2", "Qwen/Qwen2-0.5B-Instruct", "TinyLlama/TinyLlama-1.1B-Chat-v1.0"],
-        index=0,
+        LLAMA_HF_MODELS,
+        index=LLAMA_HF_MODELS.index(default_model),
     )
     hf_api_token = HF_API_TOKEN
     use_huggingface = bool(hf_api_token)
+    if not hf_api_token:
+        st.sidebar.warning("HF_API_TOKEN is missing; using heuristic reasoning.")
 
     st.sidebar.divider()
 

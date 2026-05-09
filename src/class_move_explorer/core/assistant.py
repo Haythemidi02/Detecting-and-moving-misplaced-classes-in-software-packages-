@@ -9,12 +9,12 @@ from typing import Dict, List, Tuple
 from class_move_explorer.analyzers.java_parser import JavaProjectAnalyzer
 from class_move_explorer.analyzers.dependency_analyzer import DependencyAnalyzer
 from class_move_explorer.analyzers.embedding_analyzer import EmbeddingAnalyzer
-from class_move_explorer.analyzers.llm_analyzer import LLMAnalyzer
+from class_move_explorer.analyzers.llm_analyzer import DEFAULT_HF_MODEL, LLMAnalyzer
 from class_move_explorer.utils.metrics import PerformanceMetrics
 
 
 class MoveClassAssistant:
-    def __init__(self, use_huggingface: bool = True, hf_model: str = "microsoft/phi-2",
+    def __init__(self, use_huggingface: bool = True, hf_model: str = DEFAULT_HF_MODEL,
                  hf_api_token: str = None):
         self.project_analyzer = JavaProjectAnalyzer()
         self.dependency_analyzer = DependencyAnalyzer()

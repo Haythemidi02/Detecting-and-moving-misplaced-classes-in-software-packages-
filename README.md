@@ -14,7 +14,7 @@
 -   **🔍 Multi-Layered Analysis**:
     -   **Structural**: AST-based parsing (via `javalang`) to extract dependencies, inheritance, and field types.
     -   **Semantic**: Intent-based comparison using Sentence Transformers (`all-MiniLM-L6-v2`) to match class purpose with package context.
-    -   **Reasoning**: LLM-powered explanation engine (supporting Phi-2, Qwen, TinyLlama) to justify every relocation.
+    -   **Reasoning**: LLM-powered explanation engine using Hugging Face Llama instruct models to justify every relocation.
 -   **📈 Intelligent Metrics**: Calculates Package Cohesion, Afferent/Efferent coupling, and LCOM to identify architectural bottlenecks.
 -   **🖥️ Modern Dashboard**: A Streamlit-based UI for project visualization, KPI tracking, and interactive analysis results.
 -   **🧪 Robust Evaluation**:
@@ -72,7 +72,10 @@ pip install -r requirements.txt
 Create a `.env` file in the root directory to enable HuggingFace LLM support:
 ```env
 HF_API_TOKEN=your_huggingface_token_here
+HF_MODEL=meta-llama/Llama-3.2-1B-Instruct
 ```
+
+The default LLM is `meta-llama/Llama-3.2-1B-Instruct`. The Streamlit sidebar also supports `meta-llama/Llama-3.2-3B-Instruct` and `meta-llama/Meta-Llama-3.1-8B-Instruct`. These Hugging Face models require a valid token and accepted model access on your Hugging Face account; if the token is missing or invalid, ClassMoveExplorer falls back to deterministic heuristic reasoning.
 
 ---
 

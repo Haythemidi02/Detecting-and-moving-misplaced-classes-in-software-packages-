@@ -8,27 +8,40 @@ from typing import Dict, List, Set, Tuple
 import numpy as np
 
 
+DEFAULT_HF_MODEL = "meta-llama/Llama-3.2-1B-Instruct"
+LLAMA_HF_MODELS = [
+    "meta-llama/Llama-3.2-1B-Instruct",
+    "meta-llama/Llama-3.2-3B-Instruct",
+    "meta-llama/Meta-Llama-3.1-8B-Instruct",
+]
+
+
 class LLMAnalyzer:
-    def __init__(self, use_huggingface: bool = True, hf_model: str = "microsoft/phi-2",
+    def __init__(self, use_huggingface: bool = True, hf_model: str = DEFAULT_HF_MODEL,
                  hf_api_token: str = None):
         """Initialize analyzer with HuggingFace API support"""
         self.hf_model = hf_model
         self.hf_api_token = hf_api_token
         self.hf_available = False
+        self.hf_status = "disabled"
 
         if use_huggingface:
             try:
-                from huggingface_hub import InferenceClient
-                # Test if we can authenticate
+                from huggingface_hub import HfApi, InferenceClient
                 if hf_api_token:
-                    client = InferenceClient(model=self.hf_model, token=hf_api_token)
+                    HfApi(token=hf_api_token).whoami()
+                    self.client = InferenceClient(model=self.hf_model, token=hf_api_token)
                     self.hf_available = True
+                    self.hf_status = f"ready ({hf_model})"
                     print(f"Initializing reasoning engine with HuggingFace API ({hf_model})...")
                 else:
+                    self.hf_status = "missing token"
                     print("HuggingFace API token not provided. Using heuristic-based reasoning...")
             except ImportError:
+                self.hf_status = "huggingface_hub not installed"
                 print("HuggingFace not available. Using heuristic-based reasoning...")
             except Exception as e:
+                self.hf_status = f"unavailable: {e}"
                 print(f"HuggingFace API error: {e}. Using heuristic-based reasoning...")
                 self.hf_available = False
 
@@ -36,13 +49,14 @@ class LLMAnalyzer:
         self.package_rules = self._get_package_rules()
 
     def _call_huggingface(self, prompt: str, max_tokens: int = 150) -> str:
-        """Call HuggingFace Inference API (free tier - no API key needed)"""
+        """Call the configured HuggingFace Inference endpoint."""
         try:
             from huggingface_hub import InferenceClient
-            client = InferenceClient(model=self.hf_model)
+            client = InferenceClient(model=self.hf_model, token=self.hf_api_token)
             response = client.text_generation(prompt, max_new_tokens=max_tokens)
             return response if response else ""
         except Exception as e:
+            self.hf_status = f"generation failed: {e}"
             print(f"HuggingFace API error: {e}")
             return ""
 
@@ -68,15 +82,10 @@ Extends: {extends if extends else 'none'}
 
 Provide a brief explanation (1-2 sentences) of why this class belongs in the {target_type} layer. Focus on architectural patterns, naming conventions, and annotations."""
 
-        try:
-            from huggingface_hub import InferenceClient
-            client = InferenceClient(model=self.hf_model, token=self.hf_api_token)
-            response = client.text_generation(prompt, max_new_tokens=150)
-            if response:
-                lines = response.split('\n')
-                return ' '.join(lines[:3])
-        except Exception as e:
-            print(f"HuggingFace API error: {e}")
+        response = self._call_huggingface(prompt, max_tokens=150)
+        if response:
+            lines = response.split('\n')
+            return ' '.join(lines[:3]).strip()
         return ""
         
     def _get_package_rules(self) -> Dict:
